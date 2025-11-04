@@ -116,7 +116,7 @@ serverless-spark-iot-framework/
 
 This work is part of a research project at **Indian Institute of Information Technology Kottayam**.
 
-**Authors**: Naman Nitin Rao, Manvith M, Kancharla Rohan, Kolli Nithin Reddy  
+**Authors**: Manvith M 
 **Advisor**: Dr. Shajulin Benedict
 
 ---
