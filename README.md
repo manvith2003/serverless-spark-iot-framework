@@ -135,7 +135,7 @@ Contributions welcome! Please open an issue or submit a pull request.
 
 ## 📧 Contact
 
-For questions or collaboration: [your.email@example.com]
+For questions or collaboration: [manvith131250@gmail.com]
 
 ---
 
