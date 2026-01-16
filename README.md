@@ -2,9 +2,6 @@
 
 **Real-time IoT data processing framework using Apache Spark with serverless architecture, reinforcement learning optimization, and edge-cloud synchronization.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
-[![PySpark 3.5](https://img.shields.io/badge/pyspark-3.5-orange.svg)](https://spark.apache.org/)
 
 ---
 
