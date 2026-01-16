@@ -1,4 +1,4 @@
-# 🚀 Serverless Spark IoT Framework
+#  Serverless Spark IoT Framework
 
 **Real-time IoT data processing framework using Apache Spark with serverless architecture, reinforcement learning optimization, and edge-cloud synchronization.**
 
@@ -8,7 +8,7 @@
 
 ---
 
-## 🌟 Novel Contributions
+## Novel Contributions
 
 This framework introduces several **first-of-their-kind** innovations:
 
@@ -20,7 +20,7 @@ This framework introduces several **first-of-their-kind** innovations:
 
 ---
 
-## 🏗️ Architecture
+##  Architecture
 ```
 IoT Devices → Edge Processing → MQTT/Kafka → Serverless Spark → Output
               (CRDT Sync)      (Ingestion)   (RL Optimizer)    (Dashboard)
@@ -29,7 +29,7 @@ IoT Devices → Edge Processing → MQTT/Kafka → Serverless Spark → Output
 
 ---
 
-## 🛠 Tech Stack
+##  Tech Stack
 
 - **Processing**: Apache Spark 3.5 (Serverless)
 - **Streaming**: Kafka, MQTT (Mosquitto)
@@ -40,7 +40,7 @@ IoT Devices → Edge Processing → MQTT/Kafka → Serverless Spark → Output
 
 ---
 
-## 📋 Prerequisites
+##  Prerequisites
 
 - **OS**: macOS (M2/M3), Linux, Windows
 - **RAM**: 8GB minimum, 16GB recommended
@@ -51,7 +51,7 @@ IoT Devices → Edge Processing → MQTT/Kafka → Serverless Spark → Output
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### 1. Clone Repository
 ```bash
@@ -77,7 +77,7 @@ python tests/test_setup.py
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 ```
 serverless-spark-iot-framework/
 ├── ingestion/              # MQTT/Kafka data ingestion
@@ -93,7 +93,7 @@ serverless-spark-iot-framework/
 
 ---
 
-## 🎯 Use Cases
+##  Use Cases
 
 - **Smart Cities**: Real-time traffic and pollution monitoring
 - **Healthcare**: Patient vitals analysis with privacy preservation
@@ -102,7 +102,7 @@ serverless-spark-iot-framework/
 
 ---
 
-## 📊 Performance (Preliminary)
+##  Performance (Preliminary)
 
 | Metric | Baseline | Our Framework | Improvement |
 |--------|----------|---------------|-------------|
@@ -112,7 +112,7 @@ serverless-spark-iot-framework/
 
 ---
 
-## 📝 Research Paper
+##  Research Paper
 
 This work is part of a research project at **Indian Institute of Information Technology Kottayam**.
 
@@ -121,22 +121,21 @@ This work is part of a research project at **Indian Institute of Information Tec
 
 ---
 
-## 📄 License
+##  License
 
 MIT License - see [LICENSE](LICENSE) file
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 
 Contributions welcome! Please open an issue or submit a pull request.
 
 ---
 
-## 📧 Contact
+##  Contact
 
 For questions or collaboration: [manvith131250@gmail.com]
 
 ---
 
-**Built with ❤️ for the IoT and Serverless Computing community**
