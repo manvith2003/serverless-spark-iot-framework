@@ -1,0 +1,25 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  rl-scaling:
+    lang: python3-http
+    handler: ./rl-scaling-function
+    image: rl-scaling-function:latest
+    environment:
+      MODEL_PATH: /home/app/function/models/rl_optimizer
+      write_debug: "true"
+    labels:
+      com.openfaas.scale.min: "1"
+      com.openfaas.scale.max: "5"
+      com.openfaas.scale.zero: "true"
+      com.openfaas.scale.target: "50"
+    limits:
+      memory: 256Mi
+      cpu: 200m
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    readonly_root_filesystem: false

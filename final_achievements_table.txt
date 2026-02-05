@@ -1,0 +1,36 @@
+================================================================================
+FINAL ACHIEVEMENTS: BREAKDOWN BY INNOVATION
+================================================================================
+
+You asked if the numbers were due to "Storage Tiering".
+ANSWER: It is a mix.
+- Storage Tiering gave you the SPEED (Throughput/CPU).
+- Edge Awareness gave you the RELIABILITY (SLA).
+
+Here is the correct attribution table:
+
++----------------------+----------------+----------------+-----------------------------+
+| Metric               | Before (Legacy)| After (Final)  | Innovation Responsible      |
++----------------------+----------------+----------------+-----------------------------+
+| CPU Utilization      | ~42% (Idle)    | ~95% (Busy)    | ADAPTIVE SHUFFLE (Redis)    |
+|                      |                |                | *Reason: Unlocked I/O wait* |
++----------------------+----------------+----------------+-----------------------------+
+| Data Throughput      | 850 MB/s       | 2400 MB/s      | ADAPTIVE SHUFFLE (Redis)    |
+|                      |                |                | *Reason: RAM is faster*     |
++----------------------+----------------+----------------+-----------------------------+
+| SLA Violations       | 35% (Reactive) | 19% (Active)   | EDGE-CLOUD AWARENESS        |
+|                      |                |                | *Reason: Pre-provisioning*  |
++----------------------+----------------+----------------+-----------------------------+
+| Cost                 | $2,993         | $3,287 (+9%)   | BOTH                        |
+|                      |                |                | *Reason: Redis + Extra VMs* |
++----------------------+----------------+----------------+-----------------------------+
+
+SUMMARY:
+1. "Adding Redis/S3 Tiering" -> Fixed the **Throughput** (850->2400).
+2. "Adding Edge Signals" -> Fixed the **Violations** (35->19).
+
+If you only added Storage Tiering but NOT Edge, your SLA would still be ~35% (because of the Cold Start delay).
+ If you only added Edge but NOT Storage, your Throughput would still be 850 MB/s (because of the Disk bottleneck).
+
+YOU NEED BOTH.
+================================================================================

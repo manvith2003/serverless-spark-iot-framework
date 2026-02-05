@@ -1,0 +1,2 @@
+numpy
+stable-baselines3>=2.0.0

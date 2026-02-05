@@ -17,35 +17,61 @@ from mqtt_ingestion.mqtt_subscriber import MQTTSubscriber
 
 
 class IoTKafkaProducer:
-    """Kafka producer for IoT data"""
+    """Kafka producer for IoT data with production-grade settings"""
     
-    def __init__(self, bootstrap_servers: str = "localhost:9092"):
+    def __init__(self, bootstrap_servers: str = "localhost:9092",
+                 compression_type: str = "gzip",
+                 enable_idempotence: bool = True):
         self.bootstrap_servers = bootstrap_servers
+        self.compression_type = compression_type
+        self.enable_idempotence = enable_idempotence
         self.producer = None
+        self.dlq_producer = None  # Dead letter queue producer
         self.message_count = 0
+        self.failed_count = 0
         
     def connect(self):
-        """Connect to Kafka broker"""
+        """Connect to Kafka broker with production settings"""
         try:
             print(f"   Connecting to Kafka at {self.bootstrap_servers}...")
+            print(f"   Compression: {self.compression_type} | Idempotent: {self.enable_idempotence}")
+            
+            # Main producer with exactly-once semantics
             self.producer = KafkaProducer(
                 bootstrap_servers=self.bootstrap_servers,
                 value_serializer=lambda v: json.dumps(v).encode('utf-8'),
                 key_serializer=lambda k: k.encode('utf-8') if k else None,
-                acks='all',
-                retries=3,
-                max_in_flight_requests_per_connection=1,
+                # Production settings
+                acks='all',  # Wait for all replicas
+                retries=5,   # Retry on transient errors
+                max_in_flight_requests_per_connection=1 if self.enable_idempotence else 5,
+                enable_idempotence=self.enable_idempotence,  # Exactly-once semantics
+                compression_type=self.compression_type,  # Compress messages
+                linger_ms=5,  # Small batch optimization
+                batch_size=32768,  # 32KB batch size
                 request_timeout_ms=30000,
                 api_version=(2, 5, 0)
             )
+            
+            # Separate producer for dead letter queue (simpler config)
+            self.dlq_producer = KafkaProducer(
+                bootstrap_servers=self.bootstrap_servers,
+                value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+                key_serializer=lambda k: k.encode('utf-8') if k else None,
+                acks='all',
+                compression_type='gzip'
+            )
+            
             print(f"✅ Connected to Kafka broker at {self.bootstrap_servers}")
+            print(f"   ├─ Main producer: idempotent={self.enable_idempotence}")
+            print(f"   └─ DLQ producer: ready")
             return True
         except Exception as e:
             print(f"❌ Failed to connect to Kafka: {e}")
             return False
     
     def send_message(self, topic: str, data: dict, key: str = None):
-        """Send message to Kafka topic"""
+        """Send message to Kafka topic with DLQ fallback"""
         if not self.producer:
             raise ConnectionError("Producer not connected")
         
@@ -66,18 +92,62 @@ class IoTKafkaProducer:
             
         except KafkaError as e:
             print(f"❌ Kafka error: {e}")
+            self._send_to_dlq(topic, data, key, str(e))
             return None
         except Exception as e:
             print(f"❌ Error sending message: {e}")
+            self._send_to_dlq(topic, data, key, str(e))
             return None
     
+    def _send_to_dlq(self, original_topic: str, data: dict, key: str, error: str):
+        """Send failed message to dead letter queue"""
+        if not self.dlq_producer:
+            return
+        
+        try:
+            dlq_message = {
+                "original_topic": original_topic,
+                "original_key": key,
+                "original_data": data,
+                "error": error,
+                "failed_at": time.strftime("%Y-%m-%dT%H:%M:%S")
+            }
+            self.dlq_producer.send("iot-dead-letter", value=dlq_message, key=key)
+            self.failed_count += 1
+            print(f"   ↳ 🔄 Sent to dead-letter queue")
+        except Exception as dlq_error:
+            print(f"   ↳ ❌ DLQ also failed: {dlq_error}")
+    
+    def send_validated(self, data: dict, key: str = None):
+        """Send validated data to the validated topic"""
+        return self.send_message("iot-validated-data", data, key)
+    
+    def send_alert(self, data: dict, key: str = None, priority: str = "critical"):
+        """Send alert to the appropriate alert topic"""
+        topic = "iot-alerts-critical" if priority == "critical" else "iot-alerts-critical"
+        alert_data = {
+            **data,
+            "alert_priority": priority,
+            "alert_time": time.strftime("%Y-%m-%dT%H:%M:%S")
+        }
+        return self.send_message(topic, alert_data, key)
+    
+    def send_analytics_result(self, data: dict, key: str = None):
+        """Send analytics results"""
+        return self.send_message("iot-analytics-results", data, key)
+    
     def close(self):
-        """Close the producer"""
+        """Close all producers"""
         if self.producer:
             self.producer.flush()
             self.producer.close()
-            print(f"\n📊 Sent {self.message_count} messages to Kafka")
-            print("🛑 Kafka producer closed")
+        if self.dlq_producer:
+            self.dlq_producer.flush()
+            self.dlq_producer.close()
+        print(f"\n📊 Sent {self.message_count} messages to Kafka")
+        if self.failed_count > 0:
+            print(f"⚠️  {self.failed_count} messages sent to dead-letter queue")
+        print("🛑 Kafka producer closed")
 
 
 class MQTTToKafkaBridge:
