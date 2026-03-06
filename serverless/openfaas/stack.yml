@@ -11,10 +11,13 @@ functions:
     environment:
       MODEL_PATH: /home/app/function/models/rl_optimizer
       write_debug: "true"
+      PREWARM_ENABLED: "true"
+      COLD_START_PENALTY_MS: "15000"
     labels:
       com.openfaas.scale.min: "1"
       com.openfaas.scale.max: "5"
       com.openfaas.scale.zero: "true"
+      com.openfaas.scale.zero-duration: "5m"
       com.openfaas.scale.target: "50"
     limits:
       memory: 256Mi

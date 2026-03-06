@@ -38,6 +38,17 @@ Architecture:
 └─────────────────────────────────────────────────────────────────────────────┘
 
 Key Rule: Phase-2 updates (α, β, γ) BETWEEN Phase-1 episodes, never during!
+
+Enhanced: Pattern Feature Extractor feeds 7 temporal features into Phase-1
+state (13→20 dims), enabling proactive pre_warm actions to mitigate cold starts.
+
+Data Flow:
+    IoT Devices → MQTT → Kafka → [Pattern Extractor taps here]
+                                         ↓
+                                  7 features → Phase-1 RL (20D state)
+                                         ↓
+                                  Actions: scale_up / scale_down /
+                                           maintain / pre_warm
 """
 
 import numpy as np
@@ -112,7 +123,8 @@ class ContinuousTwoRLLoop:
                  cost_budget_per_hour: float = 10.0,
                  episode_length: int = 60,
                  step_interval_seconds: float = 1.0,
-                 online_update_frequency: int = 32):
+                 online_update_frequency: int = 32,
+                 cold_start_penalty_ms: float = 15000.0):
         
         # Business constraints
         self.sla_target = sla_latency_target_ms
@@ -151,25 +163,48 @@ class ContinuousTwoRLLoop:
         self.current_hour = 10
         self.current_day = 1
         
-        logger.info("ContinuousTwoRLLoop initialized")
+        # Pattern Feature Extractor for cold start mitigation
+        from rl_core.pattern_feature_extractor import PatternFeatureExtractor
+        self.pattern_extractor = PatternFeatureExtractor(
+            window_size=300,
+            burst_velocity_percentile=90.0,
+            min_samples_for_stats=5
+        )
+        
+        # Cold start tracking
+        self.cold_start_penalty_ms = cold_start_penalty_ms
+        self.warm_executors = 0
+        self.cold_starts_avoided = 0
+        self.cold_starts_occurred = 0
+        self.wasted_prewarms = 0
+        self.prewarm_active = False
+        
+        logger.info("ContinuousTwoRLLoop initialized (Pattern-Aware + Cold Start Mitigation)")
     
     def _build_phase1_state(self, metrics: StepMetrics) -> np.ndarray:
-        """Build Phase-1 state vector (13 dimensions)"""
-        return np.array([
-            metrics.workload_rate,      # Workload rate
-            100.0,                       # Data volume
-            metrics.cpu_util,            # CPU util
-            50.0,                        # Memory util
-            metrics.latency_ms,          # Latency
-            metrics.cost,                # Cost rate
-            self.alpha,                  # α (from Phase-2)
-            self.beta,                   # β (from Phase-2)
-            self.gamma,                  # γ (from Phase-2)
-            50.0,                        # Shuffle size
-            0.5,                         # Data temperature
-            metrics.workload_rate * 1.1, # Predicted next workload
-            0.0                          # Burst signal
+        """Build Phase-1 state vector (20 dimensions = 13 base + 7 pattern)."""
+        pattern_features = self.pattern_extractor.extract_features()
+        
+        base_state = np.array([
+            metrics.workload_rate,      # [0]  Workload rate
+            100.0,                       # [1]  Data volume
+            metrics.cpu_util,            # [2]  CPU util
+            50.0,                        # [3]  Memory util
+            metrics.latency_ms,          # [4]  Latency
+            metrics.cost,                # [5]  Cost rate
+            self.alpha,                  # [6]  Alpha (from Phase-2)
+            self.beta,                   # [7]  Beta (from Phase-2)
+            self.gamma,                  # [8]  Gamma (from Phase-2)
+            50.0,                        # [9]  Shuffle size
+            0.5,                         # [10] Data temperature
+            metrics.workload_rate * 1.1, # [11] Predicted next workload
+            0.0                          # [12] Burst signal
         ], dtype=np.float32)
+        
+        # Append 7 pattern features: [13-19]
+        # velocity, acceleration, rolling_mean, rolling_std,
+        # burst_probability, hour_sin, hour_cos
+        return np.concatenate([base_state, pattern_features])
     
     def _build_phase2_state(self, episode: EpisodeMetrics) -> np.ndarray:
         """Build Phase-2 state vector (9 dimensions)"""
@@ -196,12 +231,9 @@ class ContinuousTwoRLLoop:
             cost_trend
         ], dtype=np.float32)
     
-    def _compute_phase1_reward(self, metrics: StepMetrics) -> float:
-        """
-        Phase-1 reward: Uses weights from Phase-2
-        
-        R = -α·cost - β·latency + γ·throughput
-        """
+    def _compute_phase1_reward(self, metrics: StepMetrics,
+                               action_type: str = 'maintain') -> float:
+        """Phase-1 reward with cold start bonus/penalty."""
         norm_cost = metrics.cost / 10.0
         norm_latency = metrics.latency_ms / 1000.0
         norm_throughput = metrics.workload_rate / 200.0
@@ -211,6 +243,23 @@ class ContinuousTwoRLLoop:
             -self.beta * norm_latency +
             self.gamma * norm_throughput
         )
+        
+        # Cold start mitigation rewards
+        if action_type == 'pre_warm':
+            burst_prob = self.pattern_extractor.extract_features()[4]
+            if burst_prob > 0.6:
+                reward += 0.5  # Bonus: correctly pre-warmed before spike
+                self.cold_starts_avoided += 1
+            else:
+                reward -= 0.3  # Penalty: wasted pre-warm
+                self.wasted_prewarms += 1
+        
+        # Penalty for cold start (executors near zero when spike hits)
+        if (self.current_executors <= 1 and
+                metrics.workload_rate > 100 and
+                metrics.latency_ms > self.sla_target * 2):
+            reward -= 1.0
+            self.cold_starts_occurred += 1
         
         return reward
     
@@ -239,22 +288,29 @@ class ContinuousTwoRLLoop:
         
         return latency_reward + cost_reward + violation_penalty
     
-    def _phase1_get_action(self, state: np.ndarray) -> int:
-        """Get scaling action from Phase-1 (or heuristic if no model)"""
+    def _phase1_get_action(self, state: np.ndarray) -> Tuple[int, str]:
+        """Get scaling action from Phase-1. Returns (target_executors, action_type)."""
         if self.phase1_model is not None:
             action, _ = self.phase1_model.predict(state, deterministic=False)
-            return int(action[0]) + 1  # 1-20 executors
+            return int(action[0]) + 1, 'scale_up'
         
-        # Heuristic fallback
+        # Heuristic fallback with pattern-aware pre-warming
         workload = state[0]
         latency = state[4]
+        burst_probability = state[17] if len(state) > 17 else 0.0
+        traffic_velocity = state[13] if len(state) > 13 else 0.0
+        
+        # PRE-WARM: Pattern extractor detected upcoming spike
+        if burst_probability > 0.6 and traffic_velocity > 5.0:
+            target = min(20, self.current_executors + 4)
+            return target, 'pre_warm'
         
         if latency > self.sla_target * 1.2:
-            return min(20, self.current_executors + 2)  # Scale up
+            return min(20, self.current_executors + 2), 'scale_up'
         elif workload < 50 and latency < self.sla_target * 0.5:
-            return max(1, self.current_executors - 1)   # Scale down
+            return max(1, self.current_executors - 1), 'scale_down'
         else:
-            return self.current_executors               # Maintain
+            return self.current_executors, 'maintain'
     
     def _phase2_get_weights(self, state: np.ndarray) -> Tuple[float, float, float]:
         """Get (α, β, γ) from Phase-2 (or heuristic if no model)"""
@@ -350,18 +406,33 @@ class ContinuousTwoRLLoop:
             # 1. Get current metrics
             metrics = self._simulate_metrics()
             
-            # 2. Build Phase-1 state
+            # 1b. Feed metrics to pattern extractor (IoT stream tap)
+            self.pattern_extractor.update(
+                workload_rate=metrics.workload_rate,
+                cpu_util=metrics.cpu_util,
+                latency_ms=metrics.latency_ms,
+                timestamp=metrics.timestamp
+            )
+            
+            # 2. Build Phase-1 state (20 dims with pattern features)
             state = self._build_phase1_state(metrics)
             
-            # 3. Phase-1 gets action
-            action = self._phase1_get_action(state)
+            # 3. Phase-1 gets action (now includes pre_warm)
+            action, action_type = self._phase1_get_action(state)
             
-            # 4. Apply action (scale executors)
+            # 4. Apply action (scale executors or pre-warm)
             old_executors = self.current_executors
-            self.current_executors = action
+            if action_type == 'pre_warm':
+                self.warm_executors = action - self.current_executors
+                self.current_executors = action
+                self.prewarm_active = True
+            else:
+                self.current_executors = action
+                if self.prewarm_active and metrics.workload_rate < 50:
+                    self.prewarm_active = False
             
-            # 5. Compute Phase-1 reward
-            reward = self._compute_phase1_reward(metrics)
+            # 5. Compute Phase-1 reward (with cold start bonus/penalty)
+            reward = self._compute_phase1_reward(metrics, action_type)
             
             # 6. Store experience for Phase-1 learning
             if prev_state is not None:
@@ -380,10 +451,13 @@ class ContinuousTwoRLLoop:
             if metrics.latency_ms > self.sla_target:
                 sla_violations += 1
             
-            # 9. Log progress
+            # 9. Log progress (shows action type and burst probability)
             if step % 10 == 0:
-                logger.info(f"  Step {step:3d} | Exec: {old_executors}→{action} | "
-                           f"Lat: {metrics.latency_ms:5.0f}ms | R: {reward:+.3f}")
+                burst_p = self.pattern_extractor.extract_features()[4]
+                logger.info(f"  Step {step:3d} | {action_type:>8s} | "
+                           f"Exec: {old_executors}->{action} | "
+                           f"Lat: {metrics.latency_ms:5.0f}ms | "
+                           f"Burst: {burst_p:.2f} | R: {reward:+.3f}")
             
             prev_state = state
             prev_action = action
@@ -506,7 +580,19 @@ class ContinuousTwoRLLoop:
         logger.info(f"   Avg Latency: {avg_latency:.0f}ms")
         logger.info(f"   Avg Cost: ${avg_cost:.2f}")
         logger.info(f"   Total SLA Violations: {total_violations}")
-        logger.info(f"   Final Weights: α={self.alpha:.3f}, β={self.beta:.3f}, γ={self.gamma:.3f}")
+        logger.info(f"   Final Weights: a={self.alpha:.3f}, b={self.beta:.3f}, g={self.gamma:.3f}")
+        
+        # Cold start mitigation summary
+        logger.info(f"\n COLD START MITIGATION SUMMARY:")
+        logger.info(f"   Cold Starts Avoided: {self.cold_starts_avoided}")
+        logger.info(f"   Cold Starts Occurred: {self.cold_starts_occurred}")
+        logger.info(f"   Wasted Pre-warms: {self.wasted_prewarms}")
+        total_prewarm = self.cold_starts_avoided + self.wasted_prewarms
+        if total_prewarm > 0:
+            accuracy = self.cold_starts_avoided / total_prewarm * 100
+            logger.info(f"   Pre-warm Accuracy: {accuracy:.1f}%")
+        pattern_diag = self.pattern_extractor.get_diagnostics()
+        logger.info(f"   Pattern Samples: {pattern_diag['samples']}")
     
     def start_background(self, num_episodes: int = 100):
         """Start continuous loop in background thread"""

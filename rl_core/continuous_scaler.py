@@ -191,7 +191,7 @@ class ContinuousRLScaler:
             # ─────────────────────────────────────────────────────────
             metrics = self._get_current_metrics()
             
-            logger.info(f"\n📊 Iteration {iteration}")
+            logger.info(f"\n Iteration {iteration}")
             logger.info(f"   Metrics: workload={metrics['workload_rate']:.0f} msg/s, "
                        f"cpu={metrics['cpu_util']:.0f}%, latency={metrics['latency_ms']:.0f}ms")
             
@@ -200,7 +200,7 @@ class ContinuousRLScaler:
             # ─────────────────────────────────────────────────────────
             decision = self.rl_scheduler.get_scaling_decision(metrics)
             
-            logger.info(f"   🤖 RL Decision: {decision['action'].upper()} → "
+            logger.info(f"    RL Decision: {decision['action'].upper()} → "
                        f"{decision['target_executors']} executors")
             logger.info(f"   Reason: {decision['reason']}")
             
@@ -211,11 +211,11 @@ class ContinuousRLScaler:
             target = decision['target_executors']
             
             if target != current:
-                logger.info(f"   🔧 Calling Resource Manager: {current} → {target} executors")
+                logger.info(f"    Calling Resource Manager: {current} → {target} executors")
                 result = self.rm_client.request_executors(target)
-                logger.info(f"   ✅ RM Response: {result['status']}, allocated={result['allocated']}")
+                logger.info(f"    RM Response: {result['status']}, allocated={result['allocated']}")
             else:
-                logger.info(f"   ⏸️  No change needed (already at {current} executors)")
+                logger.info(f"     No change needed (already at {current} executors)")
             
             # ─────────────────────────────────────────────────────────
             # STEP 4: RECORD FOR LEARNING
@@ -233,7 +233,7 @@ class ContinuousRLScaler:
             # ─────────────────────────────────────────────────────────
             time.sleep(self.poll_interval)
         
-        logger.info("\n🛑 SCALING LOOP STOPPED")
+        logger.info("\n SCALING LOOP STOPPED")
     
     def start(self):
         """Start the continuous scaling loop in background thread"""

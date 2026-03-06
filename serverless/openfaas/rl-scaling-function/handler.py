@@ -67,6 +67,11 @@ class RLScalingHandler:
         edge_burst_signal = metrics.get('edge_burst_signal', 0.0)
         edge_predicted_workload = metrics.get('edge_predicted_workload', workload_rate)
         
+        # Pattern features (from PatternFeatureExtractor)
+        burst_probability = metrics.get('burst_probability', 0.0)
+        traffic_velocity = metrics.get('traffic_velocity', 0.0)
+        traffic_acceleration = metrics.get('traffic_acceleration', 0.0)
+        
         # Decision logic
         decision = {
             'action': 'maintain',
@@ -94,13 +99,25 @@ class RLScalingHandler:
             decision['reason'] = f'Low load ({workload_rate:.1f} msg/s). Reducing executors.'
             decision['confidence'] = 0.85
             
-        # Case 3: Edge burst predicted - pre-scale up
-        elif edge_burst_signal > 0.5:
-            target = min(self.MAX_EXECUTORS, int(current_executors * 2.5))
-            decision['action'] = 'scale_up'
+        # Case 3: Pattern-based PRE-WARM (cold start mitigation)
+        elif burst_probability > 0.6 and traffic_velocity > 5.0:
+            target = min(self.MAX_EXECUTORS, current_executors + 4)
+            decision['action'] = 'pre_warm'
             decision['target_executors'] = target
             decision['executors_to_add'] = target - current_executors
-            decision['reason'] = f'Edge burst predicted! Pre-scaling to {target} executors.'
+            decision['pre_warm_count'] = target - current_executors
+            decision['reason'] = (f'Pattern detected: burst_prob={burst_probability:.2f}, '
+                                  f'velocity={traffic_velocity:.1f}. Pre-warming {target - current_executors} executors.')
+            decision['confidence'] = 0.92
+            
+        # Case 3b: Edge burst predicted - pre-scale up
+        elif edge_burst_signal > 0.5:
+            target = min(self.MAX_EXECUTORS, int(current_executors * 2.5))
+            decision['action'] = 'pre_warm'
+            decision['target_executors'] = target
+            decision['executors_to_add'] = target - current_executors
+            decision['pre_warm_count'] = target - current_executors
+            decision['reason'] = f'Edge burst predicted! Pre-warming to {target} executors.'
             decision['confidence'] = 0.90
             
         # Case 4: High load - scale up

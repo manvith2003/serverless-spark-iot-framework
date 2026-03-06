@@ -120,6 +120,12 @@ class SparkExecutorManager:
         self.metrics_history = []
         self.decision_history = []
         
+        # Cold start tracking
+        self.cold_start_count = 0
+        self.cold_start_times = []
+        self.prewarm_count = 0
+        self.warm_executors = 0
+        
     def collect_metrics(self) -> Dict:
         """Collect current metrics from Spark and system"""
         
@@ -161,13 +167,13 @@ class SparkExecutorManager:
     def apply_scaling_decision(self, decision: ScalingDecision) -> bool:
         """Apply the scaling decision to Spark cluster"""
         
-        print(f"\n🎯 Applying Scaling Decision: {decision.action}")
+        print(f"\n  Applying Scaling Decision: {decision.action}")
         print(f"   Target: {decision.target_executors} executors")
         print(f"   Reason: {decision.reason}")
         print(f"   Confidence: {decision.confidence:.0%}")
         
         if decision.action == 'maintain':
-            print("   ✅ No changes needed")
+            print("   No changes needed")
             return True
             
         if decision.action == 'scale_down':
@@ -175,6 +181,9 @@ class SparkExecutorManager:
             
         if decision.action == 'scale_up':
             return self._scale_up(decision)
+        
+        if decision.action == 'pre_warm':
+            return self._pre_warm(decision)
         
         return False
     
@@ -236,8 +245,33 @@ class SparkExecutorManager:
                 return False
         else:
             # Simulation mode
-            print(f"   ➕ [SIMULATED] Requested {decision.executors_to_add} new executors")
+            print(f"   [SIMULATED] Requested {decision.executors_to_add} new executors")
             self.current_executors = decision.target_executors
+            return True
+    
+    def _pre_warm(self, decision: ScalingDecision) -> bool:
+        """Pre-warm executors in standby mode to mitigate cold starts."""
+        pre_warm_count = getattr(decision, 'pre_warm_count', decision.executors_to_add)
+        if pre_warm_count <= 0:
+            pre_warm_count = decision.executors_to_add
+        
+        print(f"   [PRE-WARM] Requesting {pre_warm_count} warm standby executors")
+        self.prewarm_count += pre_warm_count
+        
+        if self.spark_context:
+            try:
+                self.spark_context._jsc.sc().requestExecutors(pre_warm_count)
+                print(f"   Pre-warmed {pre_warm_count} executors (warm standby)")
+                self.current_executors = decision.target_executors
+                self.warm_executors = pre_warm_count
+                return True
+            except Exception as e:
+                print(f"   Failed to pre-warm executors: {e}")
+                return False
+        else:
+            print(f"   [SIMULATED] Pre-warmed {pre_warm_count} executors")
+            self.current_executors = decision.target_executors
+            self.warm_executors = pre_warm_count
             return True
     
     def run_scaling_loop(self, interval_seconds: int = 30):
