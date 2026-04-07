@@ -148,39 +148,54 @@ No existing framework combines: (1) Multi-objective RL, (2) Serverless function 
 \begin{frame}{Data Flow: End-to-End Pipeline}
 \centering
 \begin{tikzpicture}[
-    box/.style={rectangle, draw, rounded corners=3pt, minimum height=0.75cm, font=\scriptsize, align=center, minimum width=1.6cm},
-    arr/.style={-{Stealth[length=2mm]}, thick},
-    scale=0.82, transform shape
+    box/.style={rectangle, draw, rounded corners=4pt,
+                minimum height=0.85cm, minimum width=1.8cm,
+                font=\scriptsize, align=center},
+    arr/.style={-{Stealth[length=2.5mm]}, thick},
 ]
-% Top row: data path
-\node[box, fill=edgeblue!20] (iot)   at (0,0)     {IoT\\Sensors};
-\node[box, fill=edgeblue!20] (edge)  at (2.3,0)   {Edge\\Gateway};
-\node[box, fill=kafkapurp!15](kafka) at (4.6,0)   {Apache\\Kafka};
-\node[box, fill=sparkred!15] (spark) at (9.2,0)   {Spark\\Executors};
-\node[box, fill=seeryel!20]  (shuf)  at (11.5,0)  {Shuffle\\Tier Mgr};
+%% TOP ROW
+\node[box, fill=edgeblue!20]   (iot)   at (0,0)     {IoT\\Sensors};
+\node[box, fill=edgeblue!20]   (edge)  at (2.6,0)   {Edge\\Gateway};
+\node[box, fill=kafkapurp!15]  (kafka) at (5.2,0)   {Apache\\Kafka};
+\node[box, fill=sparkred!15]   (spark) at (7.8,0)   {Spark\\Executors};
 
-% Bottom row: RL + OpenFaaS
-\node[box, fill=rlgreen!15]  (meta)  at (3.2,-2.2) {TD3\\Meta-Ctrl};
-\node[box, fill=rlgreen!20]  (ppo)   at (5.8,-2.2) {PPO\\Agent};
-\node[box, fill=openfaas!15] (faas)  at (8.4,-2.2) {OpenFaaS\\Function};
+%% BOTTOM ROW
+\node[box, fill=rlgreen!15]    (meta)  at (2.6,-2.6) {TD3\\Meta-Ctrl};
+\node[box, fill=rlgreen!20]    (ppo)   at (5.2,-2.6) {PPO\\Agent};
+\node[box, fill=openfaas!15]   (faas)  at (7.8,-2.6) {OpenFaaS\\Function};
 
-% Data path arrows
-\draw[arr] (iot) -- (edge);
-\draw[arr] (edge) -- (kafka);
-\draw[arr] (spark) -- (shuf);
+%% TOP ROW ARROWS (horizontal, clear of boxes)
+\draw[arr] (iot.east)  -- (edge.west);
+\draw[arr] (edge.east) -- (kafka.west);
+% Kafka -> Spark: arc above boxes
+\draw[arr] (kafka.north) -- ++(0,0.6)
+    -- node[above, font=\tiny]{stream} ++(2.6,0)
+    -- (spark.north);
 
-% Kafka to RL
-\draw[arr] (kafka) -- node[left, font=\tiny]{metrics} (meta);
-\draw[arr, purple] (meta) -- node[above, font=\tiny]{$\alpha,\beta,\gamma$} (ppo);
-\draw[arr] (kafka.south) -- ++(0,-0.8) -| node[below, font=\tiny, near start]{features} (ppo.south);
+%% KAFKA -> RL
+% Kafka -> Meta: down then left
+\draw[arr] (kafka.south) -- ++(0,-0.55) -|
+    node[left, font=\tiny, pos=0.65]{metrics} (meta.north);
+% Meta -> PPO: horizontal
+\draw[arr, purple] (meta.east) --
+    node[above, font=\tiny]{$\alpha,\beta,\gamma$} (ppo.west);
 
-% RL to Spark via OpenFaaS
-\draw[arr, rlgreen] (ppo) -- node[above, font=\tiny]{decision} (faas);
-\draw[arr, openfaas] (faas) -- node[right, font=\tiny]{scale} (spark);
+%% EDGE BURST -> PPO: drop below edge, then right
+\draw[arr, dashed, edgeblue] (edge.south) -- ++(0,-0.8) -|
+    node[below, font=\tiny, near start]{burst signal} (ppo.north);
 
-% Feedback loops
-\draw[arr, dashed, sparkred] (spark.south) -- ++(0,-1.2) -| node[below, font=\tiny, near start]{reward} (meta.south);
-\draw[arr, dashed, edgeblue] (edge.south) -- ++(0,-1.5) -| node[below, font=\tiny, near start]{burst signal} (ppo);
+%% RL -> Spark via OpenFaaS
+\draw[arr, rlgreen] (ppo.east) --
+    node[above, font=\tiny]{decision} (faas.west);
+\draw[arr, openfaas] (faas.north) -- ++(0,0.55) -|
+    node[right, font=\tiny, pos=0.3]{scale} (spark.south);
+
+%% FEEDBACK: Spark -> Meta (loop around right + bottom)
+\draw[arr, dashed, sparkred]
+    (spark.east) -- ++(0.6,0)
+    -- ++(0,-3.55)
+    -| node[below, font=\tiny, near start]{reward} (meta.south);
+
 \end{tikzpicture}
 \end{frame}
 
