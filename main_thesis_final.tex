@@ -1,0 +1,193 @@
+\documentclass[12pt, a4paper]{report}
+
+% ==========================================
+% PACKAGES
+% ==========================================
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{longtable}
+\usepackage{lipsum} 
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{adjustbox}
+
+% Optional: Set pgfplots version for compatibility
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric, shapes.misc}
+
+% Links setup
+\usepackage[colorlinks=true, linkcolor=blue, urlcolor=blue, citecolor=blue]{hyperref}
+
+% Geometry
+\geometry{
+ a4paper,
+ left=30mm,
+ right=25mm,
+ top=25mm,
+ bottom=25mm,
+}
+
+% Code listing styles
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue}\bfseries,
+    stringstyle=\color{orange},
+    commentstyle=\color{green!60!black},
+    backgroundcolor=\color{gray!5},
+    frame=single,
+    rulecolor=\color{gray!40},
+    breaklines=true,
+    breakatwhitespace=true,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    captionpos=b
+}
+
+\onehalfspacing
+
+% ==========================================
+% FRONT MATTER
+% ==========================================
+\title{\textbf{Hierarchical, Edge-Aware Reinforcement Learning for Serverless Spark IoT Optimization}\\
+\vspace{1cm}
+\large A Thesis Submitted in Partial Fulfillment of the Requirements for the Degree of\\
+\textbf{Master of Technology in Computer Science}\\
+\vspace{2cm}
+\textbf{Submitted By:}\\
+\textbf{Manvith M}\\
+\vspace{1cm}
+\textbf{Under the Guidance of:}\\
+\textbf{Dr. Shajulin Benedict}}
+
+\date{February 2026}
+
+\begin{document}
+
+\maketitle
+
+% --- CERTIFICATE ---
+\chapter*{Certificate}
+This is to certify that the thesis titled "\textbf{Hierarchical, Edge-Aware Reinforcement Learning for Serverless Spark IoT Optimization}" submitted by \textbf{Manvith M} to the Indian Institute of Information Technology Kottayam is a record of bona fide work carried out by him under my supervision. This work has not been submitted elsewhere for any other degree or diploma.
+\vspace{3cm}
+\\
+\textbf{Dr. Shajulin Benedict}\\
+(Thesis Supervisor)
+\clearpage
+
+% --- ACKNOWLEDGEMENT ---
+\chapter*{Acknowledgement}
+I would like to express my deepest gratitude to my guide, Dr. Shajulin Benedict, for his invaluable guidance, patience, and support throughout this research. His insights into Serverless Computing and Reinforcement Learning shaped the core contributions of this thesis. I also thank the Department of Computer Science for providing the necessary computational resources.
+\clearpage
+
+% --- ABSTRACT ---
+\begin{abstract}
+The rapid proliferation of Internet of Things (IoT) devices has led to an explosion of high-velocity data streams that require real-time processing. Apache Spark, deployed in a Serverless environment, has emerged as a dominant framework for such workloads. However, traditional auto-scaling mechanisms (e.g., Kubernetes HPA) fail to address the dynamic and bursty nature of IoT traffic, suffering from "Reactivity Lag" leading to Service Level Agreement (SLA) violations.
+
+This thesis proposes a novel \textbf{Serverless Spark IoT Framework} that integrates three key innovations:
+
+1. \textbf{Hierarchical Contextual Reinforcement Learning (Two-Phase)}: We introduce a bi-level control hierarchy. A high-level \textbf{Meta-Controller} based on Twin Delayed Deep Deterministic Policy Gradient (TD3) acts as a manager, dynamically tuning the reward priority weights ($\alpha, \beta, \gamma$) of a lower-level \textbf{Resource Agent} (Proximal Policy Optimization - PPO). This solves the problem of fixed-objective optimization in dynamic business environments.
+
+2. \textbf{Serverless Decoupling (OpenFaaS)}: The RL control plane is fully decoupled from the Spark JVM execution plane by wrapping the RL optimizer inside an OpenFaaS HTTP-triggered function. This enables the control plane to achieve \textbf{Scale-to-Zero}, dropping idle intelligence costs by 95.6\%.
+
+3. \textbf{Edge-Cloud Burst Awareness}: To overcome the Cold Start problem fundamental to serverless systems, we implemented an Edge Feature Extractor. Fast probabilistic burst signals are routed to the OpenFaaS RL agent via a low-latency MQTT lane, triggering a \texttt{PRE\_WARM} execution that allocates Executors up to 45 seconds before the data tsunami hits.
+
+Extensive empirical evaluations confirm that the proposed system dominates traditional fixed provisioning and HPA-based baselines. The framework entirely eliminated SLA violations (0\%), reduced P95 latency by 80.1\% (1534 ms down to 306 ms), and increased burst throughput by 120\%—all while reducing the total 24-hour operation cost by 36.5\%. These results prove that Hierarchical RL, deployed as a serverless gateway, serves as a superior autonomous orchestrator for next-generation IoT big data infrastructure.
+\end{abstract}
+\clearpage
+
+% --- TOC & LISTS ---
+\tableofcontents
+\clearpage
+\listoftables
+\clearpage
+\listoffigures
+\clearpage
+
+% ==========================================
+% MAIN CHAPTERS
+% ==========================================
+
+% Note: Compile this file using 'pdflatex main_thesis_final.tex'
+
+\input{chapter_introduction.tex}
+\input{chapter_literature_review.tex}
+\input{chapter_system_architecture.tex}
+\input{chapter_rl_optimizer.tex}
+\input{chapter_hierarchical_rl_openfaas.tex}
+\input{chapter_results_discussion.tex}
+\input{chapter_conclusion.tex}
+
+% ==========================================
+% REFERENCES (Bibliography)
+% ==========================================
+\begin{thebibliography}{99}
+
+\bibitem{hendrickson2020serverless}
+Hendrickson, S., et al. (2020). ``Serverless Computation with OpenLambda.'' \textit{USENIX Symposium on Networked Systems Design and Implementation (NSDI)}.
+
+\bibitem{castro2020serverless}
+Castro, P., et al. (2020). ``The Rise of Serverless Computing.'' \textit{Communications of the ACM}, 62(12), 44-54.
+
+\bibitem{shahrad2020serverless}
+Shahrad, M., et al. (2020). ``Serverless in the Wild: Characterizing and Optimizing the Serverless Workload at a Large Cloud Provider.'' \textit{USENIX Annual Technical Conference (ATC)}.
+
+\bibitem{werner2024reference}
+Werner, S., et al. (2024). ``A Reference Architecture for Serverless Apache Spark.'' \textit{IEEE Transactions on Cloud Computing}.
+
+\bibitem{pu2019shuffling}
+Pu, Q., et al. (2019). ``Locus: Serverless Analytics with a Shuffle-aware Execution Engine.'' \textit{USENIX NSDI}.
+
+\bibitem{eismann2021serverless}
+Eismann, S., et al. (2021). ``A Review of Serverless Use Cases and their Characteristics.'' \textit{IEEE Transactions on Software Engineering}.
+
+\bibitem{kjorveziroski2021iot}
+Kjorveziroski, V., et al. (2021). ``IoT Data Analytics: A Systematization of Knowledge.'' \textit{IEEE Access}.
+
+\bibitem{chen2021edge}
+Chen, J., et al. (2021). ``Edge-Cloud Collaboration for Real-Time IoT Systems.'' \textit{IEEE Internet of Things Journal}.
+
+\bibitem{cai2024spsc}
+Cai, Z., et al. (2024). ``SPSC: Deep Reinforcement Learning for Stream Processing Auto-Scaling.'' \textit{ACM Transactions on Computer Systems}.
+
+\bibitem{eizaguirre2022seer}
+Eizaguirre, A., et al. (2022). ``Seer: Predictive auto-scaling for Big Data processing frameworks.'' \textit{Future Generation Computer Systems}.
+
+\bibitem{nestorov2024dexter}
+Nestorov, I., et al. (2024). ``Dexter: HPA for Stateful Streaming Engines.'' \textit{Conference on Innovative Data Systems Research (CIDR)}.
+
+\bibitem{zhou2024deep}
+Zhou, Y., et al. (2024). ``Deep Reinforcement Learning for Cloud Resource Allocation: A Survey.'' \textit{ACM Computing Surveys}.
+
+\bibitem{schulman2017ppo}
+Schulman, J., et al. (2017). ``Proximal Policy Optimization Algorithms.'' \textit{arXiv preprint arXiv:1707.06347}.
+
+\bibitem{symeonides2023sparkedge}
+Symeonides, M., et al. (2023). ``SparkEdge: An Edge-Aware Spark Optimization Framework.'' \textit{IEEE INFOCOM}.
+
+\bibitem{gandhi2018}
+Gandhi, A., et al. (2018). ``Autoscaling for Stateful Systems.'' \textit{ACM Symposium on Cloud Computing (SoCC)}.
+
+\bibitem{lu2016}
+Lu, T., et al. (2016). ``Seer: Predictive load profiling for cloud systems.'' \textit{IEEE International Conference on Cloud Computing}.
+
+\bibitem{evans2016}
+Evans, R., Gao, J. (2016). ``DeepMind AI Reduces Google Data Centre Cooling Bill by 40\%.'' \textit{Google Blog}.
+
+\bibitem{mao2016resource}
+Mao, H., et al. (2016). ``Resource management with deep reinforcement learning.'' \textit{ACM Workshop on Hot Topics in Networks (HotNets)}.
+
+\end{thebibliography}
+
+\end{document}
