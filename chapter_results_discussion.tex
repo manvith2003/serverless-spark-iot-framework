@@ -1,462 +1,123 @@
 % ============================================================
-%  Chapter: Results and Discussion (Enhanced)
-%  All figures are pgfplots / TikZ — no external image files
-%  ~10-12 pages
+%  Chapter: Results and Discussion (Compact)
 % ============================================================
 \chapter{Results and Discussion}
 \label{chap:results}
 
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Overview}
-% ──────────────────────────────────────────────────────────────────────────────
-
-This chapter presents the full experimental findings for the Serverless Spark IoT
-Framework, covering training convergence, adaptive policy behaviour, comparative
-benchmarking, 24-hour workload simulation, and the impact of the OpenFaaS serverless
-deployment. All experiments were conducted in the containerised testbed described in
-Chapter~\ref{chap:architecture}, with the Two-Phase RL system (PPO + TD3) deployed as
-the \texttt{rl-scaling-function} via OpenFaaS.
-
-The chapter is structured as follows:
-\begin{itemize}
-  \item Section~\ref{sec:exp_setup} --- Experimental setup and methodology.
-  \item Section~\ref{sec:training} --- Training dynamics and convergence (PPO + TD3).
-  \item Section~\ref{sec:policy_demo} --- Policy decision demo across three workload regimes.
-  \item Section~\ref{sec:stats} --- Statistical evaluation across 20 episodes.
-  \item Section~\ref{sec:baseline} --- Comparative evaluation against four baselines.
-  \item Section~\ref{sec:24h} --- 24-hour real IoT workload simulation.
-  \item Section~\ref{sec:openfaas_results} --- OpenFaaS cost impact (scale-to-zero).
-  \item Sections~\ref{sec:discussion}--\ref{sec:summary_results} --- Discussion, limitations, and summary.
-\end{itemize}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Experimental Setup}
 \label{sec:exp_setup}
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
+All experiments ran on an Apple M2 (8-core, 16 GB) with Spark 3.5, Kafka 3.6, and
+OpenFaaS hosting the \texttt{rl-scaling-function}. Three PPO runs (50k steps each)
+and one TD3 run (30k steps) were executed with fixed seeds; each policy was evaluated
+over 20 episodes per scenario.
 
-\begin{table}[H]
-\centering
-\caption{Experimental Testbed Configuration}
-\label{tab:testbed}
-\begin{tabular}{lll}
-\toprule
-\textbf{Component}          & \textbf{Configuration}          & \textbf{Notes}                        \\
-\midrule
-Host hardware               & Apple M2 (8-core, 16 GB RAM)    & All services containerised            \\
-Apache Spark                & 3.5, local cluster mode          & Dynamic allocation enabled            \\
-Kafka                       & 3.6, 1 broker, 3 topics          & Partitions = 3, retention = 1 h       \\
-MQTT broker                 & Mosquitto 2.0, QoS-1             & 3 domain publishers                   \\
-Redis                       & 7.2, single instance             & Metrics + offset cache                \\
-OpenFaaS gateway            & Latest, warm replica $\geq 1$    & scale.zero.duration = 5 min           \\
-RL framework                & Stable-Baselines3 (PPO + TD3)    & Gymnasium 0.29                        \\
-PPO training steps          & 50,000 (3 independent runs)      & Batch 64, rollout 2048, epochs 10     \\
-TD3 training steps          & 30,000                           & Episode boundary updates              \\
-Evaluation episodes         & 20 per scenario                  & Seeds fixed for reproducibility       \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent Three independent PPO training runs (PPO\_1, PPO\_2, PPO\_3) were executed
-with different random seeds to validate reproducibility. Metrics recorded per run:
-Cost (\$/hr), latency (ms), throughput (msg/s), episode reward, and episode length.
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Training and Convergence Analysis}
+% ─────────────────────────────────────────────────────────────
+\section{Training Convergence}
 \label{sec:training}
-% ──────────────────────────────────────────────────────────────────────────────
-
-\subsection{PPO Rollout Reward Convergence}
-
-Figure~\ref{fig:ppo_convergence} shows the mean episode reward during rollout across
-all three training runs. The reward is the raw sum of the multi-objective reward function
-$R_t = -0.4\,C_{norm} - 0.4\,L_{norm} + 0.2\,T_{norm}$.
+% ─────────────────────────────────────────────────────────────
+Figure~\ref{fig:ppo_convergence} shows the PPO rollout reward improving from
+$\approx -1200$ to $\approx -660$ across all three runs, confirming reproducibility.
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=13cm, height=6.5cm,
-    xlabel={Training Timestep ($\times 10^3$)},
-    ylabel={Mean Episode Reward (\texttt{rollout/ep\_rew\_mean})},
-    title={\textbf{PPO Rollout Reward --- Three Independent Runs}},
+    width=13cm, height=5.5cm,
+    xlabel={Timestep ($\times 10^3$)}, ylabel={Mean Episode Reward},
+    title={\textbf{PPO Rollout Reward --- Three Runs}},
     grid=major, grid style={gray!25},
-    ymin=-1300, ymax=-500,
-    xmin=0, xmax=50,
+    ymin=-1300, ymax=-500, xmin=0, xmax=50,
     legend pos=south east, legend style={font=\footnotesize},
     every axis plot/.append style={thick}
 ]
-% PPO_1
 \addplot[blue!70, smooth] coordinates {
     (0,-1200)(5,-1100)(10,-980)(15,-890)(20,-830)
     (25,-790)(30,-760)(35,-735)(40,-710)(45,-690)(50,-672)};
 \addlegendentry{PPO\_1}
-% PPO_2
 \addplot[green!60!black, smooth] coordinates {
     (0,-1190)(5,-1080)(10,-960)(15,-880)(20,-820)
     (25,-780)(30,-755)(35,-730)(40,-705)(45,-685)(50,-665)};
 \addlegendentry{PPO\_2}
-% PPO_3
 \addplot[red!65, smooth] coordinates {
     (0,-1210)(5,-1090)(10,-990)(15,-895)(20,-840)
     (25,-795)(30,-765)(35,-738)(40,-712)(45,-692)(50,-660)};
 \addlegendentry{PPO\_3}
-
-% Convergence region shading
-\addplot[gray!30, fill=gray!15, opacity=0.5]
-    coordinates {(42,-1300)(50,-1300)(50,-500)(42,-500)} \closedcycle;
-\node[font=\scriptsize, gray] at (axis cs:46,-580) {Convergence\\zone};
 \end{axis}
 \end{tikzpicture}
-\caption{PPO rollout reward improves from $\approx-1200$ to $\approx-660$ across
-50,000 steps. All three runs converge consistently, confirming reproducibility.}
+\caption{PPO rollout reward improves by +540 points. All runs converge consistently.}
 \label{fig:ppo_convergence}
 \end{figure}
 
-\subsection{Evaluation Mean Reward}
+\noindent The TD3 Meta-Controller learned to shift priority from cost
+($\alpha$: 0.80$\to$0.28) toward latency ($\beta$: 0.10$\to$0.46) over 50 episodes,
+correctly reflecting that SLA violations incur higher meta-reward penalties.
 
-Figure~\ref{fig:eval_reward} shows the evaluation mean reward (deterministic policy,
-no exploration noise), which provides a cleaner signal of policy quality.
-
-\begin{figure}[H]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    width=13cm, height=5.5cm,
-    xlabel={Training Timestep ($\times 10^3$)},
-    ylabel={Evaluation Reward (\texttt{eval/mean\_reward})},
-    title={\textbf{Evaluation Mean Reward --- Deterministic Policy}},
-    grid=major, grid style={gray!25},
-    ymin=-420, ymax=-330,
-    xmin=0, xmax=50,
-    legend pos=south east, legend style={font=\footnotesize},
-    every axis plot/.append style={thick}
-]
-\addplot[blue!70, smooth, mark=*, mark repeat=5, mark size=2pt] coordinates {
-    (0,-410)(5,-405)(10,-400)(15,-395)(20,-390)
-    (25,-385)(30,-380)(35,-375)(40,-370)(45,-366)(50,-362)};
-\addlegendentry{PPO\_1}
-\addplot[green!60!black, smooth, mark=square*, mark repeat=5, mark size=2pt] coordinates {
-    (0,-408)(5,-403)(10,-398)(15,-393)(20,-388)
-    (25,-382)(30,-377)(35,-370)(40,-365)(45,-360)(50,-358)};
-\addlegendentry{PPO\_2}
-\addplot[red!65, smooth, mark=triangle*, mark repeat=5, mark size=2pt] coordinates {
-    (0,-412)(5,-407)(10,-401)(15,-396)(20,-391)
-    (25,-386)(30,-381)(35,-374)(40,-368)(45,-362)(50,-356)};
-\addlegendentry{PPO\_3 (best)}
-
-% Baseline reference
-\addplot[black, dashed, thin] coordinates {(0,-380)(50,-380)};
-\addlegendentry{Fixed 15-exec baseline}
-\end{axis}
-\end{tikzpicture}
-\caption{Evaluation reward rises from $\approx -410$ to $\approx -358$ across training.
-PPO\_3 achieves the best final reward of $-356$. All runs beat the fixed baseline
-(dashed) by Episode 30.}
-\label{fig:eval_reward}
-\end{figure}
-
-\subsection{TD3 Meta-Controller Weight Convergence}
-
-Figure~\ref{fig:td3_weights} shows how the TD3 Meta-Controller gradually shifts reward
-priority from cost ($\alpha$) toward latency ($\beta$) after discovering that
-latency violations incur higher meta-reward penalties than modest budget overruns.
-
-\begin{figure}[H]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    width=13cm, height=5.5cm,
-    xlabel={Training Episode},
-    ylabel={Weight Value ($\alpha$, $\beta$, $\gamma$)},
-    title={\textbf{TD3 Meta-Controller: Reward Weight Convergence}},
-    grid=major, grid style={gray!25},
-    ymin=0, ymax=0.85, xmin=0, xmax=50,
-    legend pos=north east, legend style={font=\footnotesize},
-    every axis plot/.append style={thick}
-]
-\addplot[red!70, smooth] coordinates {
-    (0,.80)(5,.70)(10,.62)(15,.55)(20,.48)
-    (25,.42)(30,.38)(35,.35)(40,.32)(45,.30)(50,.28)};
-\addlegendentry{$\alpha$ (Cost weight)}
-\addplot[green!60!black, smooth] coordinates {
-    (0,.10)(5,.16)(10,.22)(15,.28)(20,.33)
-    (25,.37)(30,.40)(35,.42)(40,.44)(45,.45)(50,.46)};
-\addlegendentry{$\beta$ (Latency weight)}
-\addplot[blue!65, smooth] coordinates {
-    (0,.10)(5,.14)(10,.16)(15,.17)(20,.19)
-    (25,.21)(30,.22)(35,.23)(40,.24)(45,.25)(50,.26)};
-\addlegendentry{$\gamma$ (Throughput weight)}
-\addplot[gray, dashed, thin] coordinates {(0,.333)(50,.333)};
-\addlegendentry{Initial uniform prior}
-\end{axis}
-\end{tikzpicture}
-\caption{TD3 Meta-Controller learns to reduce cost priority ($\alpha$: 0.80$\to$0.28)
-and increase latency priority ($\beta$: 0.10$\to$0.46) over 50 episodes.}
-\label{fig:td3_weights}
-\end{figure}
-
-\subsection{TensorBoard Metric Summary}
-
-\begin{table}[H]
-\centering
-\caption{TensorBoard Metric Interpretation Summary}
-\label{tab:tf_summary}
-\begin{tabular}{llll}
-\toprule
-\textbf{Metric} & \textbf{Start} & \textbf{End} & \textbf{Interpretation} \\
-\midrule
-\texttt{eval/mean\_ep\_length}   & $\approx$1000 & $\approx$1000 & Fixed horizon; no early exit --- consistent training. \\
-\texttt{eval/mean\_reward}       & $-410$        & $-358$        & +52 pts improvement; plateau at 40k steps = convergence. \\
-\texttt{rollout/ep\_len\_mean}   & $\approx$1000 & $\approx$1000 & Stable rollout; good explore--exploit balance. \\
-\texttt{rollout/ep\_rew\_mean}   & $-1200$       & $-660$        & +540 pts improvement; reward function correct and stable. \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Policy Behaviour Demonstration}
-\label{sec:policy_demo}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The trained agent was tested under three canonical workload intensities.
-Table~\ref{tab:policy_demo} summarises the agent's decisions and resulting metrics
-in each scenario.
-
-\begin{table}[H]
-\centering
-\caption{RL Agent Decisions Across Three Workload Scenarios}
-\label{tab:policy_demo}
-\begin{tabular}{lcccccc}
-\toprule
-\textbf{Scenario} & \textbf{Load} & \textbf{Exec.} & \textbf{Mem/exec} &
-  \textbf{Action} & \textbf{Latency} & \textbf{Cost} \\
-\midrule
-High Load    & 450 msg/s  & 17 & 6 GB & \texttt{SCALE\_UP}   & 87 ms   & \$6.90/hr \\
-Moderate     & 150 msg/s  & 17 & 8 GB & \texttt{MAINTAIN}    & 295 ms  & \$4.00/hr \\
-Low Load     & 30 msg/s   & 10 & 7 GB & \texttt{SCALE\_DOWN} & 574 ms  & \$1.80/hr \\
-Night Idle   & $<$10 msg/s & 0 & --- & \texttt{scale\_zero} & ---     & \$0.00/hr \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent Figure~\ref{fig:policy_bar} visualises cost and latency side-by-side for each
-scenario, clearly showing the inverse relationship that the RL agent successfully
-navigates.
-
-\begin{figure}[H]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    ybar, bar width=0.55cm,
-    width=13cm, height=6cm,
-    ylabel={Value},
-    title={\textbf{RL Agent: Cost and Latency Across Workload Scenarios}},
-    symbolic x coords={High Load, Moderate, Low Load, Night Idle},
-    xtick=data,
-    ymin=0, ymax=750,
-    nodes near coords,
-    every node near coord/.append style={font=\scriptsize\bfseries},
-    grid=major, grid style={gray!25},
-    legend pos=north west, legend style={font=\footnotesize},
-    bar shift auto
-]
-\addplot[fill=red!55] coordinates
-    {(High Load,690)(Moderate,400)(Low Load,180)(Night Idle,0)};
-\addlegendentry{Cost (cents/hr)}
-
-\addplot[fill=blue!50] coordinates
-    {(High Load,87)(Moderate,295)(Low Load,574)(Night Idle,0)};
-\addlegendentry{Latency (ms)}
-\end{axis}
-\end{tikzpicture}
-\caption{RL agent correctly trades cost for latency across workload intensities.
-Night-idle achieves \$0 (scale-to-zero via OpenFaaS).}
-\label{fig:policy_bar}
-\end{figure}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Statistical Evaluation Results}
-\label{sec:stats}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Table~\ref{tab:rl_stats} presents aggregate statistics across 20 evaluation episodes
-using the best-performing run (PPO\_3, deterministic policy).
-
-\begin{table}[H]
-\centering
-\caption{Aggregate Statistical Summary --- 20 Evaluation Episodes}
-\label{tab:rl_stats}
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Metric}     & \textbf{Mean} & \textbf{Std.\ Dev.} & \textbf{Min} & \textbf{Max} \\
-\midrule
-Cost (\$/hr)        & 6.74  & 0.21  & 6.34  & 7.16  \\
-Latency (ms)        & 306.2 & 18.9  & 263.3 & 348.5 \\
-Throughput (msg/s)  & 61.8  & 6.5   & 53.4  & 77.6  \\
-Episode Reward      &$-$379.5& 11.1 &$-$400.4&$-$349.9\\
-SLA Violations (\%) & 0.0   & 0.0   & 0.0   & 0.0   \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent Figure~\ref{fig:stability} plots cost and latency across all 20 evaluation
-episodes to validate stability.
-
-\begin{figure}[H]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    width=13cm, height=5.5cm,
-    xlabel={Evaluation Episode},
-    ylabel={Cost (\$/hr) / Latency (ms)},
-    title={\textbf{Cost and Latency Stability Across 20 Evaluation Episodes}},
-    grid=major, grid style={gray!25},
-    ymin=0, ymax=400,
-    xmin=1, xmax=20,
-    legend pos=north east, legend style={font=\footnotesize},
-    every axis plot/.append style={thick}
-]
-% Cost per episode (multiply by ~45 to share axis cleanly)
-\addplot[red!65, smooth, mark=*, mark size=2pt] coordinates {
-    (1,6.72)(2,6.81)(3,6.65)(4,6.92)(5,6.58)(6,7.05)(7,6.71)(8,6.34)
-    (9,6.89)(10,6.74)(11,7.16)(12,6.61)(13,6.80)(14,6.55)(15,6.91)
-    (16,6.67)(17,6.82)(18,6.43)(19,7.02)(20,6.74)};
-\addlegendentry{Cost (\$/hr) --- left scale}
-
-\addplot[blue!65, smooth, mark=square*, mark size=2pt] coordinates {
-    (1,312)(2,298)(3,325)(4,287)(5,340)(6,263)(7,318)(8,348)(9,299)
-    (10,306)(11,271)(12,333)(13,295)(14,320)(15,285)(16,310)(17,300)
-    (18,345)(19,278)(20,306)};
-\addlegendentry{Latency (ms) --- right scale}
-
-% Cost band
-\addplot[red!25, fill=red!10, opacity=0.3]
-    coordinates {(1,6.34)(20,6.34)(20,7.16)(1,7.16)} \closedcycle;
-% Latency band
-\addplot[blue!25, fill=blue!10, opacity=0.3]
-    coordinates {(1,263)(20,263)(20,348)(1,348)} \closedcycle;
-\end{axis}
-\end{tikzpicture}
-\caption{Cost and latency remain within tight bands across all 20 episodes.
-Shaded regions show min--max range. No episode violated the SLA.}
-\label{fig:stability}
-\end{figure}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Comparative Baseline Evaluation}
+% ─────────────────────────────────────────────────────────────
+\section{Baseline Comparison}
 \label{sec:baseline}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The RL-Spark system is evaluated against four baselines across three scenarios.
+% ─────────────────────────────────────────────────────────────
 
 \begin{table}[H]
 \centering
-\caption{Full Baseline Comparison --- All Four Policies}
+\caption{Full Baseline Comparison --- Five Policies}
 \label{tab:baselines}
-\begin{tabular}{lccccc}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{p{3.6cm}p{1.8cm}p{2.0cm}p{2.2cm}p{1.8cm}}
 \toprule
-\textbf{Policy} & \textbf{Cost (\$/hr)} & \textbf{Latency (ms)} &
-  \textbf{Throughput (msg/s)} & \textbf{SLA Viol.} & \textbf{Efficiency Score} \\
+\textbf{Policy} & \textbf{Cost} & \textbf{Latency} & \textbf{Throughput} & \textbf{SLA Viol.} \\
 \midrule
-Traditional Fixed (15 exec) & 8.50 & 1,534 & 22  & 90.0\%               & $-$2.41 \\
-Dexter (HPA, 2024)          & 7.32 & 995   & 38  & 54.4\%               & $-$1.22 \\
-Seer (Linear Predictor)     & 6.90 & 1,247 & 29  & 100.0\%              & $-$3.05 \\
-Cost-Aggressive Heuristic   & 1.01 & 3,920 & 1   & 98.0\%               & $-$7.94 \\
-\textbf{RL-Spark + OpenFaaS}& \textbf{6.74} & \textbf{306} &
-  \textbf{62} & \textbf{0.0\%} & \textbf{+0.62} \\
+Traditional Fixed (15 exec) & \$8.50 & 1,534 ms & 22 msg/s  & 90.0\% \\
+Dexter (HPA)                & \$7.32 & 995 ms   & 38 msg/s  & 54.4\% \\
+Seer (Linear Predictor)     & \$6.90 & 1,247 ms & 29 msg/s  & 100.0\% \\
+Cost-Aggressive Heuristic   & \$1.01 & 3,920 ms & 1 msg/s   & 98.0\% \\
+\textbf{RL-Spark + OpenFaaS}& \textbf{\$6.74} & \textbf{306 ms} &
+  \textbf{62 msg/s} & \textbf{0.0\%} \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
-
-\noindent Figure~\ref{fig:sla_bar} plots the SLA violation rate for each policy,
-and Figure~\ref{fig:radar_chart} shows a multi-dimensional radar comparison.
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
     ybar, bar width=0.9cm,
-    width=13cm, height=6cm,
+    width=13cm, height=5.5cm,
     ylabel={SLA Violation Rate (\%)},
     title={\textbf{SLA Violation Rate by Policy}},
-    symbolic x coords={Traditional, Dexter (HPA), Seer, Cost-Aggr., RL-Spark},
-    xtick=data,
-    ymin=0, ymax=115,
+    symbolic x coords={Traditional, Dexter, Seer, Cost-Aggr., RL-Spark},
+    xtick=data, ymin=0, ymax=115,
     nodes near coords,
     every node near coord/.append style={font=\small\bfseries},
     grid=major, grid style={gray!25},
 ]
-\addplot[fill=red!65]    coordinates {(Traditional,90.0)};
-\addplot[fill=purple!55] coordinates {(Dexter (HPA),54.4)};
+\addplot[fill=red!65]           coordinates {(Traditional,90.0)};
+\addplot[fill=purple!55]        coordinates {(Dexter,54.4)};
 \addplot[fill=yellow!70!orange] coordinates {(Seer,100.0)};
-\addplot[fill=gray!50]   coordinates {(Cost-Aggr.,98.0)};
-\addplot[fill=green!55]  coordinates {(RL-Spark,0.0)};
+\addplot[fill=gray!50]          coordinates {(Cost-Aggr.,98.0)};
+\addplot[fill=green!55]         coordinates {(RL-Spark,0.0)};
 \end{axis}
 \end{tikzpicture}
-\caption{RL-Spark + OpenFaaS achieves 0\% SLA violations --- the only policy to
-satisfy the 1,000 ms SLA across all test scenarios.}
+\caption{RL-Spark is the only policy achieving 0\% SLA violations.}
 \label{fig:sla_bar}
 \end{figure}
 
-\begin{figure}[H]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    ybar, bar width=0.55cm,
-    width=13cm, height=6cm,
-    ylabel={Latency (ms)},
-    title={\textbf{P95 Latency Comparison --- All Policies}},
-    symbolic x coords={Traditional, Dexter, Seer, Cost-Aggr., RL-Spark},
-    xtick=data,
-    ymin=0, ymax=4500,
-    nodes near coords,
-    every node near coord/.append style={font=\scriptsize\bfseries},
-    grid=major, grid style={gray!25},
-    legend pos=north east, legend style={font=\footnotesize}
-]
-\addplot[fill=red!55]    coordinates {(Traditional,1534)};
-\addplot[fill=purple!50] coordinates {(Dexter,995)};
-\addplot[fill=orange!55] coordinates {(Seer,1247)};
-\addplot[fill=gray!50]   coordinates {(Cost-Aggr.,3920)};
-\addplot[fill=green!55]  coordinates {(RL-Spark,306)};
-
-% SLA limit annotation
-\addplot[black, dashed] coordinates {(Traditional,1000)(RL-Spark,1000)};
-\end{axis}
-\node[font=\scriptsize, gray] at (9.2, 3.6) {SLA limit (1000 ms)};
-\end{tikzpicture}
-\caption{RL-Spark's P95 latency (306 ms) is 3.3$\times$ lower than the next
-best baseline (Dexter, 995 ms), and 5.0$\times$ lower than Traditional fixed.}
-\label{fig:latency_compare}
-\end{figure}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{24-Hour IoT Workload Simulation}
 \label{sec:24h}
-% ──────────────────────────────────────────────────────────────────────────────
-
-A realistic 24-hour workload trace was simulated with three distinct phases:
-night idle (00:00--06:00), morning mega-spike (09:00--11:00), and evening surge
-(19:00--21:00). Figure~\ref{fig:24h_latency} shows the latency timeline and
-Figure~\ref{fig:24h_exec} shows the executor count.
+% ─────────────────────────────────────────────────────────────
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=13cm, height=6cm,
-    xlabel={Hour of Day},
-    ylabel={Latency (ms)},
-    title={\textbf{24-Hour Latency Timeline --- RL-Spark vs.\ Traditional}},
+    width=13cm, height=5.5cm,
+    xlabel={Hour of Day}, ylabel={Latency (ms)},
+    title={\textbf{24-Hour Latency Timeline}},
     grid=major, grid style={gray!25},
-    ymin=0, ymax=2300,
-    xmin=0, xmax=24,
+    ymin=0, ymax=2300, xmin=0, xmax=24,
     legend pos=north west, legend style={font=\footnotesize},
     xtick={0,3,6,9,12,15,18,21,24},
     every axis plot/.append style={thick}
@@ -465,24 +126,16 @@ Figure~\ref{fig:24h_exec} shows the executor count.
     (0,110)(3,110)(6,115)(8,300)(9,2000)(10,1900)
     (11,500)(14,400)(17,310)(19,600)(21,130)(24,110)};
 \addlegendentry{Traditional Fixed}
-
-\addplot[purple] coordinates {
-    (0,200)(3,200)(6,210)(8,450)(9,1400)(10,1100)
-    (11,380)(14,350)(17,320)(19,550)(21,200)(24,200)};
-\addlegendentry{Dexter HPA}
-
 \addplot[green!60!black, very thick] coordinates {
     (0,0)(3,0)(6,0)(7,120)(8,210)(9,480)(10,390)
     (11,195)(14,190)(17,180)(19,260)(21,0)(24,0)};
 \addlegendentry{RL-Spark + OpenFaaS}
-
 \addplot[black, dashed] coordinates {(0,1000)(24,1000)};
-\addlegendentry{SLA limit (1000 ms)}
+\addlegendentry{SLA limit}
 \end{axis}
 \end{tikzpicture}
-\caption{RL-Spark stays below the SLA limit throughout the 24-hour trace.
-Zero-latency segments (00:00--06:00, 21:00--24:00) represent scale-to-zero
---- the cluster costs \$0 during these periods.}
+\caption{RL-Spark stays below the SLA limit throughout. Zero-latency segments =
+scale-to-zero (\$0 cost).}
 \label{fig:24h_latency}
 \end{figure}
 
@@ -490,251 +143,74 @@ Zero-latency segments (00:00--06:00, 21:00--24:00) represent scale-to-zero
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=13cm, height=5.5cm,
-    xlabel={Hour of Day},
-    ylabel={Active Executors},
-    title={\textbf{Executor Count --- RL-Spark Adapts, Traditional Wastes}},
+    width=13cm, height=5cm,
+    xlabel={Hour of Day}, ylabel={Active Executors},
+    title={\textbf{Executor Count --- Dynamic vs.\ Fixed}},
     grid=major, grid style={gray!25},
-    ymin=0, ymax=30,
-    xmin=0, xmax=24,
+    ymin=0, ymax=30, xmin=0, xmax=24,
     legend pos=north east, legend style={font=\footnotesize},
     xtick={0,3,6,9,12,15,18,21,24},
     every axis plot/.append style={thick}
 ]
 \addplot[red!65, dashed] coordinates {(0,15)(24,15)};
 \addlegendentry{Traditional (Fixed 15)}
-
 \addplot[green!60!black, very thick] coordinates {
     (0,0)(3,0)(5,0)(6,3)(7,6)(8,10)
     (9,22)(10,25)(11,15)(14,10)(17,8)
     (19,18)(20,15)(21,3)(22,0)(24,0)};
 \addlegendentry{RL-Spark (Dynamic)}
-
-% Shade the RL area under the curve
 \addplot[green!20, fill=green!10, opacity=0.4] coordinates {
     (0,0)(3,0)(5,0)(6,3)(7,6)(8,10)
     (9,22)(10,25)(11,15)(14,10)(17,8)
     (19,18)(20,15)(21,3)(22,0)(24,0)} \closedcycle;
-
-\node[font=\scriptsize, green!60!black] at (axis cs:2.5,2)  {\textbf{IDLE \$0}};
-\node[font=\scriptsize, green!60!black] at (axis cs:22.5,2) {\textbf{IDLE \$0}};
-\node[font=\scriptsize, red!70]         at (axis cs:4,16.5) {wasting \$\$\$};
+\node[font=\scriptsize, green!60!black] at (axis cs:2.5,2) {\textbf{IDLE \$0}};
+\node[font=\scriptsize, red!70] at (axis cs:4,16.5) {wasting \$\$\$};
 \end{axis}
 \end{tikzpicture}
-\caption{RL-Spark dynamically adjusts from 0 to 25 executors. Traditional
-fixed provisioning wastes 15 executors overnight and cannot scale beyond 15
-during the 09:00 mega-spike.}
+\caption{RL-Spark dynamically scales 0--25 executors; Traditional wastes 15 overnight.}
 \label{fig:24h_exec}
 \end{figure}
 
-\subsection{3-Scenario Cost Breakdown}
-
-\begin{table}[H]
-\centering
-\caption{Cost Comparison Across Three Test Scenarios}
-\label{tab:scenario_cost}
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Scenario} & \textbf{Duration} & \textbf{Traditional Cost} &
-  \textbf{RL-Spark Cost} & \textbf{Saving} \\
-\midrule
-Night Idle     & 8 h & \$11.25 & \$0.50   & \$10.75 (95.6\%) \\
-Mega Spike     & 4 h & \$11.25 & \$13.50  & $-$\$2.25 (overhead) \\
-Mixed Day      & 12 h& \$18.75 & \$12.20  & \$6.55 (34.9\%)  \\
-\midrule
-\textbf{Total} & 24 h& \textbf{\$41.25} & \textbf{\$26.20} & \textbf{\$15.05 (36.5\%)} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{figure}[H]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    ybar, bar width=0.65cm,
-    width=13cm, height=5.5cm,
-    ylabel={Cost (\$)},
-    title={\textbf{Cost by Scenario --- Traditional vs.\ RL-Spark}},
-    symbolic x coords={Night Idle, Mega Spike, Mixed Day, Total},
-    xtick=data,
-    ymin=0, ymax=48,
-    nodes near coords,
-    every node near coord/.append style={font=\scriptsize\bfseries},
-    grid=major, grid style={gray!25},
-    legend pos=north west, legend style={font=\footnotesize},
-    bar shift auto
-]
-\addplot[fill=red!60]   coordinates
-    {(Night Idle,11.25)(Mega Spike,11.25)(Mixed Day,18.75)(Total,41.25)};
-\addlegendentry{Traditional Fixed}
-\addplot[fill=green!55] coordinates
-    {(Night Idle,0.50)(Mega Spike,13.50)(Mixed Day,12.20)(Total,26.20)};
-\addlegendentry{RL-Spark + OpenFaaS}
-\end{axis}
-\end{tikzpicture}
-\caption{RL-Spark saves \$15.05 over 24 hours (36.5\%) primarily through
-scale-to-zero at night and right-sizing during the mixed day.}
-\label{fig:cost_breakdown}
-\end{figure}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{OpenFaaS Scale-to-Zero Impact}
-\label{sec:openfaas_results}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Table~\ref{tab:faas_impact} quantifies the direct impact of deploying the RL engine
-as an OpenFaaS serverless function compared to running it as an always-on Spark
-Driver process.
-
-\begin{table}[H]
-\centering
-\caption{OpenFaaS Serverless vs.\ Always-On RL Engine: Resource Impact}
-\label{tab:faas_impact}
-\begin{tabular}{lccc}
-\toprule
-\textbf{Metric}           & \textbf{Always-On (Driver)}  & \textbf{OpenFaaS (Serverless)} & \textbf{Saving} \\
-\midrule
-Idle CPU usage            & 2.1\% (continuous)           & 0.0\% (scale-to-zero)         & 100\%           \\
-Idle Memory               & 512 MB (continuous)          & 0 MB (terminated)             & 100\%           \\
-Idle cost (8 h night)     & \$0.85                       & \$0.00                        & \$0.85 (100\%)  \\
-Decision latency (warm)   & 2 ms (in-process)            & 12 ms (HTTP)                  & $-$10 ms        \\
-Decision latency (cold)   & 2 ms                         & 850 ms (cold start)           & $-$848 ms       \\
-Model update time         & Full Spark restart           & \textless 30 s (push image)   & Significant     \\
-SLA impact of cold start  & None                         & Mitigated (min replica = 1)   & Acceptable      \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent The 10 ms warm-latency overhead from the HTTP hop is negligible compared
-to the 5-second micro-batch interval. With \texttt{scale.min: 1}, cold starts only
-occur after extended idle periods ($>$5 min), and are immediately handled by the
-PPO's \texttt{PRE\_WARM} action before the next Spark decision is needed.
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Comprehensive Results Summary}
+% ─────────────────────────────────────────────────────────────
+\section{Results Summary}
 \label{sec:summary_table}
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 
 \begin{table}[H]
 \centering
-\caption{Full Improvement Table --- RL-Spark + OpenFaaS vs.\ Traditional Fixed Spark}
+\caption{RL-Spark + OpenFaaS vs.\ Traditional Fixed Spark}
 \label{tab:improvement_full}
 \begin{tabular}{lccc}
 \toprule
-\textbf{Metric}        & \textbf{Traditional} & \textbf{RL-Spark + OpenFaaS} & \textbf{Improvement} \\
+\textbf{Metric}     & \textbf{Traditional} & \textbf{RL-Spark} & \textbf{Improvement} \\
 \midrule
-Average latency        & 245 ms   & \textbf{119 ms}     & $-$51.4\%      \\
-P95 latency            & 1,534 ms & \textbf{306 ms}     & $-$80.1\%      \\
-SLA compliance         & 81.5\%   & \textbf{100\%}      & +18.5 pts      \\
-SLA violations         & 12/65    & \textbf{0/68}       & Eliminated     \\
-Hourly cost            & \$8.50   & \textbf{\$6.20}     & $-$27.1\%      \\
-Total 24 h cost        & \$41.25  & \textbf{\$26.20}    & $-$36.5\%      \\
-Night idle cost        & \$11.25  & \textbf{\$0.50}     & $-$95.6\%      \\
-Scaling reaction       & 60 s     & \textbf{5 s}        & 12$\times$     \\
-Cold-start events      & 7        & \textbf{0}          & Eliminated     \\
-Peak throughput        & 750 msg/s& \textbf{1,650 msg/s}& $+$2.2$\times$ \\
-Max executors (burst)  & 15 (cap) & \textbf{25}         & $+$67\%        \\
-Policy cost variance   & N/A      & \textbf{$\pm$\$0.21/hr} & Stable     \\
+Average latency      & 245 ms    & \textbf{119 ms}      & $-$51.4\% \\
+P95 latency          & 1,534 ms  & \textbf{306 ms}      & $-$80.1\% \\
+SLA compliance       & 81.5\%    & \textbf{100\%}       & +18.5 pts \\
+Total 24 h cost      & \$41.25   & \textbf{\$26.20}     & $-$36.5\% \\
+Night idle cost      & \$11.25   & \textbf{\$0.50}      & $-$95.6\% \\
+Scaling reaction     & 60 s      & \textbf{5 s}         & 12$\times$ \\
+Cold starts          & 7         & \textbf{0}           & Eliminated \\
+Peak throughput      & 750 msg/s & \textbf{1,650 msg/s} & +2.2$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Discussion}
+% ─────────────────────────────────────────────────────────────
+\section{Discussion and Summary}
 \label{sec:discussion}
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
+RL-Spark outperforms all baselines because it \textit{anticipates} workload changes
+via the burst-probability signal $P_{burst}$, pre-warming executors up to 45 seconds
+before bursts arrive. The Two-Phase hierarchy is essential: TD3 raises cost-priority
+($\alpha$=0.80) during idle periods and latency-priority ($\beta$=0.80) during bursts,
+achieving 95.6\% idle-cost reduction \textit{and} 0\% SLA violations simultaneously.
+OpenFaaS enables true zero-cost idle by terminating both executors and the RL optimizer.
 
-\subsection{Why RL Outperforms Threshold-Based Baselines}
+\textbf{Current limitations} include the simulated Spark environment (live AWS EMR /
+GCP Dataproc validation planned), single-host Docker testbed, and fixed SLA target.
 
-The fundamental weakness of all static or reactive policies is their inability to
-\textit{anticipate} workload changes. Dexter (HPA) responds only after CPU crosses a
-threshold, incurring the full 45--60 second cold-start penalty before new executors
-are ready. During the 9 AM mega-spike, this means approximately 1,950 messages are
-dropped before the cluster recovers.
-
-The RL agent avoids this by acting on the burst-probability signal $P_{burst}$,
-computed from the 7-feature Pattern Extractor, up to 45 seconds \textit{before} the
-burst arrives. The \texttt{PRE\_WARM} action triggers executor container creation in
-advance, so by the time the data tsunami hits, the cluster is already fully provisioned.
-
-\subsection{The Role of the Two-Phase Hierarchy}
-
-A single-phase PPO with fixed weights ($\alpha{=}0.4, \beta{=}0.4, \gamma{=}0.2$)
-would struggle with the night-idle scenario: balanced weights create incentive to keep
-some executors running to maintain throughput, even when they serve virtually no traffic.
-The TD3 Meta-Controller removes this conflict by raising $\alpha$ to 0.80 during idle
-periods, forcing cost minimisation, and switching to $\beta{=}0.80$ during bursts to
-prioritise latency at any cost. This context-sensitivity is the core reason the system
-achieves both 95.6\% idle-cost reduction \textit{and} 0\% SLA violations simultaneously.
-
-\subsection{OpenFaaS as an Architectural Enabler}
-
-Deploying the RL engine as an OpenFaaS function is not merely a deployment choice ---
-it is what makes scale-to-zero feasible at the \textit{control plane} level. When
-there are no active IoT streams, both the Spark executors \textit{and} the RL
-optimizer are terminated, achieving a true zero-cost idle state. This is impossible
-with embedded RL (Spark Driver always runs) or with Kubernetes-native deployments
-(minimum replica $\geq$1 incurs continuous billing).
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Limitations and Future Work}
-% ──────────────────────────────────────────────────────────────────────────────
-
-\begin{table}[H]
-\centering
-\caption{Current Limitations and Planned Mitigations}
-\label{tab:limitations}
-\begin{tabular}{p{5cm}p{7.5cm}}
-\toprule
-\textbf{Limitation}                     & \textbf{Planned Mitigation}                       \\
-\midrule
-Simulated Spark environment             & Validate on live AWS EMR / GCP Dataproc cluster.  \\
-Training on single-host docker          & Distributed multi-node testbed (K3s cluster).     \\
-Fixed SLA target (1000 ms)             & Per-domain adaptive SLA negotiation via TD3.       \\
-No cross-cloud variability              & Multi-cloud abstraction layer (OpenTelemetry).     \\
-Policy interpretability (black box)     & SHAP-based action attribution analysis.            \\
-Online retraining not yet automated     & Curriculum learning + periodic fine-tuning loop.  \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Summary}
-\label{sec:summary_results}
-% ──────────────────────────────────────────────────────────────────────────────
-
-This chapter presented a comprehensive empirical evaluation of the Serverless Spark
-IoT Framework with Two-Phase RL and OpenFaaS integration. The key findings are:
-
-\begin{enumerate}
-  \item \textbf{Training convergence:} All three PPO runs converged reliably within
-        50,000 steps, improving rollout reward by $+$540 points. The TD3 Meta-Controller
-        successfully learned to shift from cost-priority to latency-priority as training
-        progressed.
-
-  \item \textbf{SLA compliance:} RL-Spark achieved \textbf{100\% SLA compliance}
-        across all 68 evaluation episodes --- the only policy among five to do so.
-
-  \item \textbf{Cost efficiency:} Total 24-hour costs were reduced by \textbf{36.5\%}
-        (\$15.05 saving), with idle periods costing \$0.50 vs.\ \$11.25 for the
-        traditional fixed approach.
-
-  \item \textbf{Latency:} P95 latency improved from 1,534 ms to 306 ms
-        ($-$80.1\%), far exceeding the 1,000 ms SLA threshold.
-
-  \item \textbf{Proactive scaling:} The \texttt{PRE\_WARM} action, guided by the
-        7-feature Pattern Extractor, eliminated all 7 cold-start events observed in
-        the baseline.
-
-  \item \textbf{Throughput:} Peak throughput increased 2.2$\times$ (750 msg/s to
-        1,650 msg/s) thanks to dynamic scale-out up to 25 executors during bursts.
-\end{enumerate}
-
-\noindent These results establish that hierarchical reinforcement learning, deployed
-through a serverless function gateway, is a practical and highly effective approach
-to autonomous resource management in real-time IoT data processing at scale.
+In summary: 100\% SLA compliance across 68 episodes, 36.5\% total cost reduction,
+80.1\% P95 latency improvement, all cold starts eliminated, and 2.2$\times$ peak
+throughput — establishing hierarchical RL via a serverless gateway as a practical
+approach to autonomous IoT resource management.

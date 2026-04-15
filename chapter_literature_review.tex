@@ -1,124 +1,186 @@
 % ============================================================
-%  Chapter 2: Literature Review
-%  Expanded to include Deep RL in Serverless, HRL, 
-%  Edge-Cloud scaling, and comparative literature tables.
+%  Chapter: Literature Review (Condensed)
+%  Table retained, verbose prose trimmed
 % ============================================================
 \chapter{Literature Review}
-\label{chap:literature_review}
+\label{chap:related_work}
 
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Overview}
-% ──────────────────────────────────────────────────────────────────────────────
+This chapter surveys existing research in serverless analytics, stream processing,
+resource allocation, and reinforcement learning for cloud/edge computing. Each section
+examines a cluster of related works, and a comparative table at the end systematically
+identifies the research gaps motivating the proposed contributions.
 
-The optimization of distributed data processing frameworks has evolved significantly over the past decade, transitioning from static cluster provisioning to dynamic, AI-driven serverless orchestration. This chapter systematically reviews the state-of-the-art literature across three intersecting domains that form the foundation of this thesis:
-\begin{enumerate}
-    \item \textbf{Auto-Scaling Mechanisms in Distributed Systems:} The transition from reactive threshold-based heuristics to predictive and serverless scaling.
-    \item \textbf{Reinforcement Learning for Cloud Optimization:} The application of single-agent and Hierarchical Reinforcement Learning (HRL) to solve complex Markov Decision Processes (MDPs) in infrastructure management.
-    \item \textbf{Edge-Cloud Collaboration:} The use of edge computing not merely for data offloading, but as an active telemetry source for predictive cluster sizing.
-\end{enumerate}
+% ─────────────────────────────────────────────────────────────
+\section{Serverless Computing and Analytics}
+% ─────────────────────────────────────────────────────────────
+Serverless computing — also known as Function-as-a-Service (FaaS) — abstracts server
+provisioning entirely, scaling applications automatically and charging only for actual
+compute time~\cite{hendrickson2020serverless}. Commercial serverless analytics offerings
+such as AWS EMR Serverless, Google Dataproc Serverless, and Azure Synapse Serverless
+Spark Pools provide managed Spark environments but lack intelligent optimisation:
+resource allocation follows simple heuristics or user-specified configurations that
+cannot adapt dynamically to workload
+characteristics~\cite{aws_emr_serverless_docs,dataproc_serverless_docs,azure_synapse_docs}.
 
-Figure~\ref{fig:lit_evolution} illustrates the chronological evolution of auto-scaling literature, leading to the hybrid RL approach proposed in this work.
+Academic works further expose this gap. Pu et al.\ proposed Locus for data-shuffle
+optimisation~\cite{pu2019shuffling}; Wawrzoniak et al.\ investigated running
+unmodified Spark on serverless platforms~\cite{wawrzoniak2024off}; Werner presented a
+reference architecture for serverless big-data processing~\cite{werner2024reference}.
+These works collectively highlight the disconnect between current FaaS platforms and
+large-scale analytics workloads.
 
-\begin{figure}[H]
+% ─────────────────────────────────────────────────────────────
+\section{Shuffle Optimisation in Distributed Analytics}
+% ─────────────────────────────────────────────────────────────
+Shuffle operations (data redistribution during \texttt{groupBy}/\texttt{join}) are a
+major bottleneck in distributed analytics. Eizaguirre \&
+Sánchez-Artigas~\cite{eizaguirre2022seer} presented \textbf{Seer}, an auto-tuned
+shuffle mechanism that dynamically selects between in-memory and object-storage
+back-ends, achieving 23--45\% improvements over serverful Spark on TPC-DS benchmarks.
+However, Seer is limited to a static two-tier storage model without intermediate tiers
+(e.g.\ NVMe), lacks workload-specific learning, and does not integrate with resource
+allocation optimisation. The proposed framework extends this by incorporating four
+storage tiers (Redis, NVMe, S3, Glacier) with LSTM-based temperature
+prediction~\cite{lstm_storage_temp2022}.
+
+Kim et al.\ introduced Flint, a prototype Spark engine on AWS
+Lambda~\cite{kim2021function}, and Wawrzoniak et al.~\cite{wawrzoniak2024off} explored
+running unmodified Spark/Drill on Lambda. These works underline the need for specialised
+adaptation when scaling analytics engines onto serverless infrastructure.
+
+% ─────────────────────────────────────────────────────────────
+\section{Resource Allocation and Auto-scaling}
+% ─────────────────────────────────────────────────────────────
+Nestorov et al.~\cite{nestorov2024dexter} presented \textbf{Dexter}, a resource
+allocator for serverless analytics achieving up to 4.65$\times$ cost reduction and
+3.50$\times$ performance-cost efficiency improvement via predictive linear-regression
+and decision-tree models. However, Dexter's linear models cannot capture complex
+non-linear relationships, it optimises cost alone without latency SLA or throughput
+considerations, and its reactive approach requires workload execution before adaptation.
+The proposed work addresses these limitations through deep RL (PPO) for simultaneous
+multi-objective optimisation~\cite{schulman2017ppo}.
+
+In the broader DRL space, Cui et al.~\cite{cui2023drl} apply DRL to cloud--edge
+collaborative resource allocation in IoV systems; Fu et al.~\cite{fu2022distributed}
+analyse memory allocation using RL for edge-PLC resources; Zhou et
+al.~\cite{zhou2024deep} survey DRL-based cloud scheduling methods. These works
+demonstrate the maturity of RL for cloud/edge resource management but few target
+serverless Spark environments specifically.
+
+% ─────────────────────────────────────────────────────────────
+\section{Stream Processing Frameworks}
+% ─────────────────────────────────────────────────────────────
+Cai et al.~\cite{cai2024spsc} presented \textbf{SPSC}, a stream-processing framework
+on AWS Lambda achieving $\sim$10\% improvement over Alibaba Flink with automatic
+parallelisation and true serverless deployment. However, Lambda's 15-minute execution
+limit, stateless functions requiring external state-stores, and limited support for
+complex windowed operations make it unsuitable for the rich stateful analytics required
+by IoT workloads. The proposed framework uses serverless Spark instead, enabling
+SQL-like queries and complex stateful operations while maintaining serverless benefits.
+
+Rotchford et al.~\cite{rotchford2024laminar} introduced \textbf{Laminar 2.0}, improving
+developer productivity through code recommendations for serverless stream processing.
+While valuable for usability, Laminar 2.0 does not address resource optimisation or
+cost-efficiency — the primary focus of this work.
+
+% ─────────────────────────────────────────────────────────────
+\section{ServerlessYarn: Hybrid Serverless Platform}
+% ─────────────────────────────────────────────────────────────
+Castellanos-Rodríguez et al.~\cite{castellanos2024serverlessyarn} presented
+\textbf{ServerlessYarn}, achieving up to 41\% runtime reduction and 50\% resource
+savings through automatic container scaling on YARN clusters. However, it remains
+pseudo-serverless (still requires YARN cluster deployment), lacks intelligent
+optimisation beyond reactive scaling, and does not support multi-objective trade-offs.
+True serverless platforms eliminate all cluster management, and the proposed framework
+builds upon these with intelligent RL-based optimisation layers.
+
+% ─────────────────────────────────────────────────────────────
+\section{Reinforcement Learning in Cloud Computing}
+% ─────────────────────────────────────────────────────────────
+RL has emerged as a promising paradigm for cloud optimisation. Liu et
+al.~\cite{liu2020edge} apply multi-agent RL for IoT edge network allocation; Zhou et
+al.~\cite{zhou2024deep} survey DRL-based cloud scheduling. However, existing efforts
+mainly target containerised or VM-based clusters rather than serverless Spark.
+
+Proximal Policy Optimisation (PPO)~\cite{schulman2017ppo} has become a standard
+algorithm for continuous-control tasks due to its sample-efficiency and stability. The
+proposed work leverages PPO's multi-objective capabilities to simultaneously optimise
+cost, latency, and throughput in serverless Spark — a novel application domain.
+
+% ─────────────────────────────────────────────────────────────
+\section{Edge Computing and IoT Data Processing}
+% ─────────────────────────────────────────────────────────────
+Al-Dulaimy et al.~\cite{alDulaimy2024continuum} survey edge--cloud continuum
+architectures, and Kjorveziroski et al.~\cite{kjorveziroski2021iot} map progress in
+serverless computing at the edge. These works motivate the proposed CRDT-based
+synchronisation strategy for IoT-driven analytics pipelines, addressing the gap between
+purely cloud-centric frameworks and latency-sensitive edge deployments.
+
+% ─────────────────────────────────────────────────────────────
+\section{Research Gaps and Motivation}
+% ─────────────────────────────────────────────────────────────
+Table~\ref{tab:literature_gaps} summarises the capabilities of existing works and the
+gaps addressed by this thesis.
+
+\begin{table}[htbp]
 \centering
-\begin{tikzpicture}[
-    node/.style={rectangle, draw=black, rounded corners=3pt, minimum width=3.5cm,
-                 minimum height=1.0cm, align=center, font=\small},
-    arr/.style={-{Stealth[length=2.5mm]}, thick},
-]
-
-% Nodes
-\node[node, fill=gray!20] (gen1) at (0,4) {\textbf{Generation 1 (2010s)}\\Static Heuristics\\(AWS Auto-Scale)};
-\node[node, fill=blue!15] (gen2) at (5,4) {\textbf{Generation 2 (2015s)}\\Predictive ARIMA/LSTM\\(Seer, Prophet)};
-\node[node, fill=purple!15] (gen3) at (10,4) {\textbf{Generation 3 (2018s)}\\Single-Agent RL\\(Q-Learning, DDPG)};
-
-\node[node, fill=green!20, minimum width=8cm] (gen4) at (5,1.5) {\textbf{Generation 4 / Current Work (2024+)}\\Hierarchical RL + Edge Telemetry + Serverless FaaS Integration};
-
-% Arrows
-\draw[arr, gray] (gen1) -- (gen2);
-\draw[arr, blue] (gen2) -- (gen3);
-\draw[arr, purple] (5,3) -- (gen4.north);
-
-\end{tikzpicture}
-\caption{Evolution of auto-scaling paradigms in distributed systems literature.}
-\label{fig:lit_evolution}
-\end{figure}
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Auto-Scaling in Distributed Systems}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Auto-scaling is the automated adjustment of computational resources to match workload demands, minimizing cost while honoring Service Level Agreements (SLAs).
-
-\subsection{Threshold-Based Reactive Scaling}
-The most prevalent industry approach is rule-based reactive scaling, utilized by Kubernetes Horizontal Pod Autoscalers (HPA) and AWS Auto Scaling groups. These systems rely on static upper and lower utilization thresholds:
-\[ \text{ScaleOut if } CPU > T_{upper}, \quad \text{ScaleIn if } CPU < T_{lower} \]
-
-While computationally simplistic and robust for stateless microservices, research by \cite{gandhi2018} and \cite{castro2020serverless} highlights critical failures when applying these heuristics to stateful topologies like Apache Spark. The primary bottleneck is the \textit{initiation overhead} or \textbf{cold start}. Because reactive systems wait for CPU saturation before triggering a scale-out, the cluster is actively overloaded during the 45--60 seconds required to boot JVM executors \cite{eismann2021serverless}. By the time resources are available, IoT SLAs are typically broken.
-
-\subsection{Time-Series Predictive Scaling}
-To mitigate the cold start problem, predictability models such as ARIMA, Prophet, and LSTMs have been introduced. Frameworks like Seer \cite{lu2016} forecast future load based on historical trends:
-\[ N_{t+1} = \frac{\hat{L}_{t+1}}{C_{target}} \]
-where $\hat{L}_{t+1}$ represents the predicted load and $C_{target}$ is the target per-node capacity. 
-
-While predictive models natively handle diurnal traffic cycles, \cite{nestorov2024dexter} demonstrated that they perform poorly across highly non-stationary IoT workloads (e.g., sudden massive spikes caused by traffic accidents). Furthermore, pure predictive algorithms assume a strict linear relationship between CPU and throughput, entirely ignoring secondary bottlenecks like network I/O and shuffle disk contention \cite{pu2019shuffling}.
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Reinforcement Learning for Systems Optimization}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Unlike predictive scaling which forecasts load, Reinforcement Learning (RL) learns a direct mapping from system states to scaling actions by treating orchestration as a Markov Decision Process (MDP).
-
-\subsection{Single-Agent Approaches}
-Early applications of RL in infrastructure were popularized by DeepMind’s reduction of Google Data Centre cooling costs \cite{evans2016}. In the context of big data, Mao et al. \cite{mao2016resource} utilized policy gradient algorithms for job scheduling, while more recent studies have applied Q-Learning and Deep Deterministic Policy Gradients (DDPG) to tune Spark executor counts and memory limits dynamically.
-
-PPO (Proximal Policy Optimization) \cite{schulman2017ppo} has emerged as the standard for multi-objective cloud scheduling due to its stability and trust-region clipping, which prevents catastrophic policy collapse during training. However, the limitation of current single-agent RL research is the reliance on a \textbf{static reward function}. Authors typically combine cost and latency manually:
-\[ R_t = - (\alpha \cdot L_{norm} + \beta \cdot C_{norm}) \]
-If $\alpha$ and $\beta$ are fixed at training time, the agent cannot adapt to dynamic business environments (e.g., needing absolute low latency during the day, but prioritizing extreme cost savings at night).
-
-\subsection{Hierarchical Reinforcement Learning (HRL)}
-Hierarchical Reinforcement Learning decomposes complex MDPs into manageable sub-goals using a "Manager-Worker" paradigm. While widely researched in robotics for path planning, its application in cloud resource management remains emergent. 
-
-Recent literature suggests HRL can solve the fixed-objective limitation. A Meta-Controller assesses macro-level business goals (e.g., SLA compliance rates over a 24-hour window) and outputs continuous adjustments to the reward weights $(\alpha, \beta, \gamma)$. The lower-level worker agent (e.g., PPO) treats these weights as observations and adjusts tactical scaling accordingly. This thesis builds directly upon this paradigm by utilizing Twin Delayed DDPG (TD3) as the continuous-action Meta-Controller \cite{zhou2024deep}.
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Edge-Cloud Collaboration and Telemetry}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Edge Computing shifts processing to the network periphery. Traditionally, literature views the edge and cloud as mutually exclusive compute domains, fostering "task offloading" frameworks that mathematically decide whether an operation should execute locally or remotely.
-
-\textbf{Identified Gap:} There is a distinct lack of literature treating the edge layer as an active \textit{Control Signal Generator} for serverless clouds \cite{symeonides2023sparkedge}. Because there is a network propagation delay between a sensor emitting data and that data overwhelming a cloud ingestion queue, the edge posesses a chronological advantage. 
-
-This thesis exploits this gap. Rather than heavily processing data at the edge, we propose running lightweight temporal convolution layers (or pattern extractors) at the IoT gateway to generate a probabilistic \textit{Burst Signal}. Transmitted via a separate low-latency MQTT control lane, this signal alerts the cloud RL agent up to 45 seconds before the data tsunami hits Kafka, enabling proactive \texttt{PRE\_WARM} execution that entirely eliminates serverless cold-start SLA violations.
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Comparative Literature Review}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Table~\ref{tab:lit_comparison} contrasts five state-of-the-art auto-scaling frameworks against the novel methodology proposed in this framework.
-
-\begin{table}[H]
-\centering
-\caption{Comparison of Auto-Scaling Algorithms in Recent Literature}
-\label{tab:lit_comparison}
-\begin{adjustbox}{max width=\textwidth}
-\begin{tabular}{lcccccc}
-\toprule
-\textbf{Framework / Model} & \textbf{Year} & \textbf{Methodology} & \textbf{Cold Start} & \textbf{Objective}      & \textbf{Edge Signal} & \textbf{Decoupled} \\
-\midrule
-Kubernetes HPA             & 2018          & Reactive Threshold   & Severe              & Single (CPU Target)     & No                   & Yes                \\
-Seer \cite{lu2016}         & 2016          & Linear Predictive    & Poor                & Multi (Forecast)        & No                   & No                 \\
-Dexter \cite{nestorov2024dexter}& 2024     & Probabilistic HPA    & Moderate            & Single (QoS mapping)    & No                   & Yes                \\
-SPSC \cite{cai2024spsc}    & 2024          & DDPG (Single RL)     & Good                & Fixed Weights           & No                   & No                 \\
-\midrule
-\textbf{Our Framework}     & \textbf{2026} & \textbf{HRL (TD3+PPO)}& \textbf{Eliminated} & \textbf{Dynamic (Context)}& \textbf{Yes (MQTT)}  & \textbf{Yes (OpenFaaS)} \\
-\bottomrule
+\caption{Comparative Analysis of Existing Works and Research Gaps}
+\label{tab:literature_gaps}
+\small
+\begin{tabular}{|p{2.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.6cm}|}
+\hline
+\textbf{Feature} & \textbf{Seer} & \textbf{Dexter} & \textbf{SPSC} & \textbf{Yarn} & \textbf{Laminar 2.0} & \textbf{Proposed} \\
+\hline
+\textbf{Serverless Spark} & Yes & Yes & No & No & No & Yes \\
+\hline
+\textbf{IoT-Specific} & No & No & Partial & No & No & Yes \\
+\hline
+\textbf{Multi-Objective Optimization} & No & No & No & No & No & Yes \\
+\hline
+\textbf{RL-Based Allocation} & No & No & No & No & No & Yes \\
+\hline
+\textbf{Edge-Cloud Sync} & No & No & No & No & No & Yes \\
+\hline
+\textbf{CRDT Integration} & No & No & No & No & No & Yes \\
+\hline
+\textbf{Predictive Prefetching} & No & No & No & No & No & Yes \\
+\hline
+\textbf{Cross-Cloud Support} & No & No & No & No & No & Yes \\
+\hline
+\textbf{Cost Optimization} & No & Yes & No & Partial & No & Yes \\
+\hline
+\textbf{Latency Optimization} & Partial & No & No & No & No & Yes \\
+\hline
+\textbf{Throughput Optimization} & Partial & No & Partial & No & No & Yes \\
+\hline
 \end{tabular}
-\end{adjustbox}
 \end{table}
 
-\subsection{Synthesis and Progression to Proposed Framework}
+\noindent The key research gaps are:
+\begin{enumerate}
+  \item \textbf{No multi-objective optimisation:} Existing works optimise single
+        objectives (Dexter: cost; Seer: shuffle), whereas IoT applications require
+        balancing cost, latency, throughput, and reliability simultaneously.
+  \item \textbf{No RL in serverless Spark:} While DRL has been applied to cloud/edge
+        allocation, no prior work targets serverless Spark streaming with RL.
+  \item \textbf{Limited storage tiers:} Seer's two-tier model misses cost-performance
+        opportunities available through NVMe and archival tiers.
+  \item \textbf{No edge--cloud integration:} Existing frameworks focus on cloud-only
+        processing, ignoring edge benefits for latency-sensitive IoT.
+  \item \textbf{Vendor lock-in:} Most frameworks target a single cloud provider;
+        cross-cloud portability remains unaddressed.
+  \item \textbf{No IoT-specific optimisation:} General analytics frameworks do not
+        exploit IoT domain knowledge (burst patterns, sensor heterogeneity, temporal
+        correlations).
+\end{enumerate}
 
-The literature confirms that while serverless abstraction solves physical provisioning, logical performance tuning remains deeply flawed under IoT traffic. Reactive scaling guarantees SLA breaches. Predictive scaling fails on non-stationary bursts. Single-agent RL proves mathematically superior but cannot shift business priorities without a complete retraining cycle.
-
-By intersecting Hierarchical RL (for dynamic multi-objective scheduling), OpenFaaS (for decoupled scale-to-zero function execution), and Edge Telemetry (for cold-start mitigation), this thesis directly addresses the composite failures identified in the broader streaming analytics literature.
+% ─────────────────────────────────────────────────────────────
+\section{Summary}
+% ─────────────────────────────────────────────────────────────
+This chapter surveyed literature across serverless computing, stream processing,
+resource allocation, and reinforcement learning. While significant progress exists in
+individual areas, no prior work provides an integrated solution covering the full
+spectrum of real-time IoT analytics challenges in serverless environments. The proposed
+framework — combining RL-based multi-objective optimisation, four-tier adaptive shuffle,
+CRDT-based edge--cloud synchronisation, and cross-cloud portability — addresses these
+gaps comprehensively.

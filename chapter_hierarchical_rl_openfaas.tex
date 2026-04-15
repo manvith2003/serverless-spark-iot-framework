@@ -1,88 +1,66 @@
 % ============================================================
 %  Chapter: Hierarchical Two-Phase RL and Serverless Orchestration
-%  ~10 pages  |  TikZ + pgfplots + lstlisting + booktabs tables
+%  Condensed version — diagrams & tables retained, code removed
 % ============================================================
 \chapter{Hierarchical Two-Phase RL and Serverless Orchestration}
 \label{chap:two_phase_rl_openfaas}
 
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Introduction}
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 This chapter presents the advanced architectural evolution of the Serverless Spark IoT
-Framework. While the single-layer Proximal Policy Optimization (PPO) agent documented
-in the previous chapter demonstrated the feasibility of reinforcement learning for
-resource allocation, it suffered from a fundamental limitation: the reward weights
-($\alpha$, $\beta$, $\gamma$) governing its multi-objective optimisation were
-\textit{static}, fixed at design time and incapable of reflecting shifting operational
-priorities.
-
-To overcome this brittleness, two major innovations are introduced in this chapter:
+Framework. The single-layer PPO agent from the previous chapter fixed the reward weights
+($\alpha$, $\beta$, $\gamma$) at design time, making it unable to adapt to shifting
+operational priorities. Two innovations address this:
 \begin{enumerate}
-  \item A \textbf{Two-Phase Hierarchical Reinforcement Learning (Two-RL)} system in
-        which a strategic Meta-Controller (TD3) continuously re-tunes the reward
-        weights fed to a tactical Resource Agent (PPO).
-  \item Deployment of the entire decision engine as an \textbf{OpenFaaS serverless
-        function} (\texttt{rl-scaling-function}), ensuring the optimizer itself scales
-        to zero during idle periods and presents a clean HTTP boundary to the Spark
-        cluster.
+  \item A \textbf{Two-Phase Hierarchical RL (Two-RL)} system — a strategic TD3
+        Meta-Controller continuously re-tunes the weights fed to a tactical PPO
+        Resource Agent.
+  \item Deployment of the decision engine as an \textbf{OpenFaaS serverless function}
+        (\texttt{rl-scaling-function}), providing scale-to-zero cost elimination and a
+        clean HTTP boundary to the Spark cluster.
 \end{enumerate}
 
-The remainder of the chapter is structured as follows. Section~\ref{sec:motivation_hier}
-motivates the need for hierarchical control. Section~\ref{sec:arch_overview} presents
-the overall architecture. Sections~\ref{sec:phase2_td3}
-and~\ref{sec:phase1_adaptive_ppo} detail the two RL phases. Sections~\ref{sec:openfaas}
-and~\ref{sec:final_arch} cover the serverless deployment and the full five-layer system
-architecture. Section~\ref{sec:results_hier} summarises measured outcomes and
-Section~\ref{sec:summary_hier} concludes.
-
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Motivation for Hierarchical Control}
 \label{sec:motivation_hier}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The standalone PPO agent from the previous chapter relied on a reward function whose
-weights were fixed constants:
+% ─────────────────────────────────────────────────────────────
+The standalone PPO agent used a static reward:
 \[
-  R_t \;=\; -\underbrace{0.4}_{\alpha}\,\frac{C_t}{C_{\max}}
-           \;-\; \underbrace{0.4}_{\beta}\,\frac{L_t}{L_{\max}}
-           \;+\; \underbrace{0.2}_{\gamma}\,\frac{P_t}{P_{\max}}
+  R_t = -\underbrace{0.4}_{\alpha}\,\frac{C_t}{C_{\max}}
+        - \underbrace{0.4}_{\beta}\,\frac{L_t}{L_{\max}}
+        + \underbrace{0.2}_{\gamma}\,\frac{P_t}{P_{\max}}
 \]
-This configuration treats cost and latency as permanently equally important.
-In practice, real IoT workloads exhibit three qualitatively different regimes, each
-requiring a different priority ordering:
+Real IoT workloads exhibit three qualitatively different regimes (Table~\ref{tab:workload_regimes}),
+where optimal weights differ by up to 8$\times$. A hierarchical ``Teacher–Student''
+architecture is therefore required.
 
 \begin{table}[H]
 \centering
 \caption{Workload regimes and their required objective priority}
 \label{tab:workload_regimes}
-\begin{tabular}{llccc}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{p{2.2cm}p{3.7cm}p{2.2cm}p{2.4cm}p{2.5cm}}
 \toprule
 \textbf{Regime} & \textbf{Characteristics} & \textbf{$\alpha$ (cost)} &
   \textbf{$\beta$ (latency)} & \textbf{$\gamma$ (throughput)} \\
 \midrule
-Night Idle      & $<$20 msg/s, CPU $<$15\%   & \textbf{High (0.80)} & Low (0.10)  & Low (0.10) \\
-Business Hours  & 100--300 msg/s             & Medium (0.30)        & \textbf{High (0.55)} & Low (0.15) \\
-Traffic Burst   & $>$400 msg/s, CPU $>$80\%  & Very Low (0.10)      & \textbf{Very High (0.80)} & Low (0.10) \\
+Night Idle      & $<$20 msg/s, CPU $<$15\%  & \textbf{High (0.80)} & Low (0.10) & Low (0.10) \\
+Business Hours  & 100--300 msg/s            & Medium (0.30) & \textbf{High (0.55)} & Low (0.15) \\
+Traffic Burst   & $>$400 msg/s, CPU $>$80\% & Very Low (0.10) & \textbf{Very High (0.80)} & Low (0.10) \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
-\noindent Table~\ref{tab:workload_regimes} illustrates that optimal weights differ by a
-factor of 8$\times$ between night-idle and burst regimes. A single fixed policy
-cannot cover this range without either wasting money overnight or dropping messages
-during peaks. A \textit{hierarchical} approach is therefore required, where a higher-level
-agent (the ``Teacher'') continuously adjusts the weights used by the lower-level agent
-(the ``Student'').
-
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Two-Phase RL Architecture}
 \label{sec:arch_overview}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The Two-RL system decomposes the overall optimisation into two nested control loops
-operating at different time-scales, as shown in Figure~\ref{fig:two_rl_arch}.
+% ─────────────────────────────────────────────────────────────
+The Two-RL system decomposes optimisation into two nested control loops operating at
+different time-scales (Figure~\ref{fig:two_rl_arch}). The \textbf{outer loop} (TD3)
+adjusts reward weights between episodes; the \textbf{inner loop} (PPO) executes
+tactical scaling every 5 s.
 
 \begin{figure}[H]
 \centering
@@ -92,158 +70,91 @@ operating at different time-scales, as shown in Figure~\ref{fig:two_rl_arch}.
     arr/.style={-{Stealth[length=3mm]}, thick},
     looplabel/.style={font=\scriptsize, color=gray}
 ]
-% Outer loop boundary
 \draw[rounded corners=8pt, dashed, color=gray!60, line width=1.2pt]
     (-1.2,-3.8) rectangle (11.5, 1.8);
 \node[looplabel] at (5.1, 1.55) {Outer Loop — Phase 2 (every episode / 50 s)};
 
-% Inner loop boundary
 \draw[rounded corners=6pt, dashed, color=green!50!black, line width=1pt]
     (-0.2,-3.1) rectangle (10.5, 0.75);
 \node[looplabel, color=green!50!black] at (5.1, 0.55) {Inner Loop — Phase 1 (every micro-batch / 5 s)};
 
-% Nodes
-\node[box, fill=purple!15, draw=purple] (td3)  at (0,0)     {TD3\\Meta-Controller\\(Phase 2)};
-\node[box, fill=green!12, draw=green!60!black] (ppo)  at (5,0)     {PPO\\Resource Agent\\(Phase 1)};
-\node[box, fill=orange!15, draw=orange] (faas) at (5,-2.5)  {OpenFaaS\\rl-scaling-function};
-\node[box, fill=red!10, draw=red!60]    (env)  at (10,0)    {Spark\\Cluster +\\IoT Workload};
+\node[box, fill=purple!15, draw=purple] (td3)  at (0,0)    {TD3\\Meta-Controller\\(Phase 2)};
+\node[box, fill=green!12, draw=green!60!black] (ppo) at (5,0) {PPO\\Resource Agent\\(Phase 1)};
+\node[box, fill=orange!15, draw=orange] (faas) at (5,-2.5) {OpenFaaS\\rl-scaling-function};
+\node[box, fill=red!10, draw=red!60]    (env)  at (10,0)   {Spark\\Cluster +\\IoT Workload};
 
-% Arrows
-\draw[arr, purple, line width=1.5pt] (td3) -- node[above,font=\scriptsize]{$\alpha,\beta,\gamma$} (ppo);
+\draw[arr, purple, line width=1.5pt]      (td3)  -- node[above,font=\scriptsize]{$\alpha,\beta,\gamma$} (ppo);
 \draw[arr, green!60!black, line width=1.3pt] (ppo) -- node[right,font=\scriptsize]{decision} (faas);
-\draw[arr, orange, line width=1.3pt] (faas) -- node[above,font=\scriptsize]{scale cmd} (env);
+\draw[arr, orange, line width=1.3pt]      (faas) -- node[above,font=\scriptsize]{scale cmd} (env);
 \draw[arr, red!60, dashed] (env.north) -- ++(0,0.5) -| node[above,font=\scriptsize,near start]{episode stats} (td3.north);
 \draw[arr, green!60!black, dashed] (env.south) -- ++(0,-0.4) -| node[below,font=\scriptsize,near start]{step reward} (ppo.south);
 \end{tikzpicture}
-\caption{Two-Phase Hierarchical RL Architecture. The outer loop (TD3) adjusts reward
-weights between episodes; the inner loop (PPO) executes tactical scaling every 5 s.}
+\caption{Two-Phase Hierarchical RL Architecture.}
 \label{fig:two_rl_arch}
 \end{figure}
 
-\noindent The two loops differ fundamentally in their temporal focus:
-\begin{itemize}
-  \item \textbf{Phase 2 (Outer Loop):} Operates on aggregated \textit{episode} statistics
-        (e.g.\ average SLA violation rate, cumulative cost). Its action is a continuous
-        3-vector $[\alpha, \beta, \gamma]$ passed through a softmax to guarantee
-        $\alpha+\beta+\gamma = 1$.
-  \item \textbf{Phase 1 (Inner Loop):} Operates on instantaneous Spark metrics sampled
-        every 5 seconds. Its action is a discrete choice: \texttt{SCALE\_UP},
-        \texttt{SCALE\_DOWN}, \texttt{MAINTAIN}, or \texttt{PRE\_WARM}.
-\end{itemize}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Phase 2: TD3 Meta-Controller}
 \label{sec:phase2_td3}
-% ──────────────────────────────────────────────────────────────────────────────
-
-\subsection{Why TD3?}
-
-The Twin Delayed Deep Deterministic Policy Gradient (TD3) algorithm was selected for the
-Meta-Controller because:
-\begin{itemize}
-  \item The weight output $[\alpha, \beta, \gamma]$ is a \textit{continuous} action, making
-        discrete-action algorithms (like DQN) unsuitable.
-  \item TD3's \textbf{twin critic} mechanism avoids the Q-value overestimation that plagues
-        vanilla DDPG, leading to more reliable convergence in sparse-reward settings.
-  \item \textbf{Delayed policy updates} (the policy network updates every 2 critic steps)
-        reduce variance during the early exploration phase.
-\end{itemize}
+% ─────────────────────────────────────────────────────────────
 
 \subsection{State, Action, and Reward Spaces}
+TD3 was selected because the weight output $[\alpha,\beta,\gamma]$ is a
+\textit{continuous} action; its twin-critic mechanism avoids Q-value overestimation and
+delayed policy updates reduce early-training variance.
 
-The Phase-2 environment is a 9-dimensional Gymnasium \texttt{Box} space capturing
-episode-level health indicators:
-
+The Phase-2 state is a 9-dimensional vector capturing episode-level health indicators
+(Table~\ref{tab:phase2_state}):
 \[
-s^{(2)}_t = \bigl[H_t,\; D_t,\; B_t,\; \Lambda_t,\; \Phi_t,\; \Theta_t,\;
-                  V_t,\; \Delta L_t,\; \Delta C_t\bigr]
+  s^{(2)}_t = \bigl[H_t,\; D_t,\; B_t,\; \Lambda_t,\; \Phi_t,\; \Theta_t,\;
+                    V_t,\; \Delta L_t,\; \Delta C_t\bigr]
 \]
-
-where the components are defined in Table~\ref{tab:phase2_state}.
 
 \begin{table}[H]
 \centering
 \caption{Phase-2 state vector dimensions}
 \label{tab:phase2_state}
-\begin{tabular}{clcc}
+{\small
+\begin{tabular}{@{}p{1.0cm}p{4.2cm}p{1.4cm}p{1.8cm}@{}}
 \toprule
-\textbf{Symbol} & \textbf{Description} & \textbf{Range} & \textbf{Normalisation} \\
+\textbf{Sym.} & \textbf{Description} & \textbf{Range} & \textbf{Norm.} \\
 \midrule
-$H_t$      & Hour of day              & [0,\;1]  & Divide by 24 \\
-$D_t$      & Day of week              & [0,\;1]  & Divide by 7  \\
-$B_t$      & Is business hours (bool) & \{0,1\}  & Binary       \\
-$\Lambda_t$& Latency / SLA target     & [0,\;3]  & Ratio        \\
-$\Phi_t$   & Cost / budget            & [0,\;3]  & Ratio        \\
-$\Theta_t$ & Throughput ratio         & [0,\;3]  & Ratio        \\
-$V_t$      & SLA violation rate       & [0,\;1]  & Fraction     \\
-$\Delta L_t$ & Latency trend         & [-1,\;1] & Normalised   \\
-$\Delta C_t$ & Cost trend            & [-1,\;1] & Normalised   \\
+$H_t$        & Hour of day               & [0,\;1]  & /24      \\
+$D_t$        & Day of week               & [0,\;1]  & /7       \\
+$B_t$        & Business hours flag       & \{0,1\}  & Binary   \\
+$\Lambda_t$  & Latency / SLA target      & [0,\;3]  & Ratio    \\
+$\Phi_t$     & Cost / budget             & [0,\;3]  & Ratio    \\
+$\Theta_t$   & Throughput ratio          & [0,\;3]  & Ratio    \\
+$V_t$        & SLA violation rate        & [0,\;1]  & Fraction \\
+$\Delta L_t$ & Latency trend             & [-1,\;1] & Norm.    \\
+$\Delta C_t$ & Cost trend                & [-1,\;1] & Norm.    \\
 \bottomrule
 \end{tabular}
+}
 \end{table}
 
-\noindent The action is a 3-dimensional continuous vector processed by softmax:
+The action is projected through a softmax ensuring $\alpha+\beta+\gamma=1$:
 \[
-  a^{(2)}_t \in \mathbb{R}^3, \qquad
-  [\alpha_t, \beta_t, \gamma_t] = \text{softmax}(a^{(2)}_t), \qquad
-  \alpha_t + \beta_t + \gamma_t = 1
+  [\alpha_t, \beta_t, \gamma_t] = \text{softmax}(a^{(2)}_t), \qquad a^{(2)}_t \in \mathbb{R}^3
 \]
-
-The meta-reward is designed to penalise SLA violations and budget overruns while rewarding weight stability:
+The meta-reward penalises SLA violations and budget overruns while rewarding weight
+stability ($S_t = -\|\alpha_t - \alpha_{t-1}\|_2$):
 \[
-  R^{(2)}_t = \underbrace{r_{SLA}}_{\text{compliance}} + \underbrace{r_{budget}}_{\text{cost}} - 0.5\,V_t + \underbrace{0.1\,S_t}_{\text{stability}}
+  R^{(2)}_t = r_{SLA} + r_{budget} - 0.5\,V_t + 0.1\,S_t
 \]
-where $S_t = -\|\alpha_t - \alpha_{t-1}\|_2$ penalises abrupt strategy changes that could destabilise the inner loop.
-
-\subsection{Phase-2 Environment Implementation}
-
-\begin{lstlisting}[language=Python, caption={Phase-2 Gymnasium Environment (core step logic)}]
-class Phase2Environment(gym.Env):
-    def __init__(self, sla_target_ms=200.0, cost_budget=10.0):
-        super().__init__()
-        # 9-dim state: hour, day, business_flag, latency_ratio,
-        #              cost_ratio, throughput_ratio, sla_violation_rate,
-        #              latency_trend, cost_trend
-        self.observation_space = spaces.Box(
-            low=np.array([0,0,0,0,0,0,0,-1,-1], dtype=np.float32),
-            high=np.array([1,1,1,3,3,3,1, 1, 1], dtype=np.float32))
-        # 3-dim continuous action → softmax → (α, β, γ)
-        self.action_space = spaces.Box(
-            low=-2*np.ones(3), high=2*np.ones(3), dtype=np.float32)
-
-    def step(self, action):
-        weights = self._softmax(action)       # α, β, γ
-        alpha, beta, gamma = weights
-        perf = self._simulate_phase1(alpha, beta, gamma)
-        reward = self._compute_reward(perf, weights)
-        self._update_state(perf, weights)
-        return self.state, reward, self.done, False, {}
-
-    def _softmax(self, x):
-        e = np.exp(x - np.max(x))            # numerical stability
-        return e / e.sum()
-\end{lstlisting}
 
 \subsection{Weight Convergence Over Training}
-
-Figure~\ref{fig:weight_convergence} illustrates how the TD3 Meta-Controller learns to
-suppress the cost weight ($\alpha$) and elevate the latency weight ($\beta$) as it
-discovers that latency violations are more costly (in terms of meta-reward) than moderate
-budget overruns.
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
     width=13cm, height=6.5cm,
-    xlabel={Training Episode},
-    ylabel={Weight Value},
+    xlabel={Training Episode}, ylabel={Weight Value},
     title={\textbf{TD3 Meta-Controller: Weight Convergence}},
     grid=major, grid style={gray!25},
     ymin=0, ymax=0.85, xmin=0, xmax=50,
-    legend pos=north east,
-    legend style={font=\footnotesize},
+    legend pos=north east, legend style={font=\footnotesize},
     every axis plot/.append style={thick}
 ]
 \addplot[red!70!black, smooth] coordinates {
@@ -265,52 +176,36 @@ budget overruns.
 \addlegendentry{Initial uniform prior}
 \end{axis}
 \end{tikzpicture}
-\caption{TD3 weight convergence over 50 training episodes. The agent correctly shifts
-from a cost-heavy initial allocation to a latency-dominated policy.}
+\caption{TD3 weight convergence over 50 episodes: agent shifts from cost-heavy to
+latency-dominated policy.}
 \label{fig:weight_convergence}
 \end{figure}
 
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Phase 1: Adaptive PPO Resource Agent}
 \label{sec:phase1_adaptive_ppo}
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 
-\subsection{Augmented State and Action Spaces}
-
-The Phase-1 PPO agent inherits the base state from the previous chapter and appends the
-TD3-supplied weights plus edge-derived features:
+\subsection{State, Action, and Dynamic Reward}
+The PPO agent augments the base state with TD3-supplied weights and edge features:
 \[
   s^{(1)}_t = \bigl[\lambda_t,\; U^{cpu}_t,\; U^{mem}_t,\; L_t,\; C_t,\;
-                     P_{burst},\; v_t,\; a_t,\;
-                     \alpha_t,\; \beta_t,\; \gamma_t\bigr]
+                    P_{burst},\; v_t,\; a_t,\; \alpha_t,\; \beta_t,\; \gamma_t\bigr]
 \]
-where $P_{burst}$ is the burst probability from the Pattern Feature Extractor,
-$v_t = \lambda_t - \lambda_{t-1}$ is traffic velocity, and $a_t$ is traffic acceleration.
+Its discrete action set is $\mathcal{A}^{(1)} = \{\texttt{SCALE\_UP},\;
+\texttt{SCALE\_DOWN},\; \texttt{MAINTAIN},\; \texttt{PRE\_WARM}\}$.
 
-The action set is a discrete 4-class choice:
+The reward function is fully parameterised by Phase-2 weights, enabling behaviour
+switching without retraining:
 \[
-  \mathcal{A}^{(1)} = \{\texttt{SCALE\_UP},\;\texttt{SCALE\_DOWN},\;
-                         \texttt{MAINTAIN},\;\texttt{PRE\_WARM}\}
+  R^{(1)}_t = -\alpha_t\!\left(\frac{C_t}{C_{\max}}\right)
+              -\beta_t \!\left(\frac{L_t}{L_{\max}}\right)
+              +\gamma_t\!\left(\frac{P_t}{P_{\max}}\right) + R_{cold}
 \]
-
-\subsection{Dynamic Reward Function}
-
-The PPO agent's reward is fully parameterised by the weights from Phase 2:
-\[
-  R^{(1)}_t = -\alpha_t \!\left(\frac{C_t}{C_{\max}}\right)
-              -\beta_t  \!\left(\frac{L_t}{L_{\max}}\right)
-              +\gamma_t \!\left(\frac{P_t}{P_{\max}}\right)
-              + R_{cold}
-\]
-The cold-start bonus $R_{cold}$ is a positive scalar awarded whenever a
-\texttt{PRE\_WARM} action successfully prevents a detected burst from breaching the SLA.
-This incentivises proactive scaling rather than reactive recovery.
+where $R_{cold}$ rewards proactive \texttt{PRE\_WARM} actions that prevent burst SLA
+breaches.
 
 \subsection{Decision Priority Cascade}
-
-At inference time the agent follows a deterministic priority cascade to select actions,
-shown in Figure~\ref{fig:decision_cascade}:
 
 \begin{figure}[H]
 \centering
@@ -318,8 +213,7 @@ shown in Figure~\ref{fig:decision_cascade}:
     decision/.style={diamond, draw, fill=yellow!20, text width=3.2cm, align=center,
                      inner sep=0pt, font=\scriptsize},
     action/.style={rectangle, draw, rounded corners=4pt, fill=green!12,
-                   minimum width=3cm, minimum height=0.7cm,
-                   font=\scriptsize, align=center},
+                   minimum width=3cm, minimum height=0.7cm, font=\scriptsize, align=center},
     arr/.style={-{Stealth[length=2.5mm]}, thick},
     yn/.style={font=\tiny, midway}
 ]
@@ -346,11 +240,11 @@ shown in Figure~\ref{fig:decision_cascade}:
 \draw[arr] (d5) -- node[yn,above]{Yes} (a5);
 \draw[arr] (d5) -- node[yn,right]{No}  (a6);
 \end{tikzpicture}
-\caption{Phase-1 action-selection priority cascade used at inference time.}
+\caption{Phase-1 action-selection priority cascade at inference time.}
 \label{fig:decision_cascade}
 \end{figure}
 
-\subsection{Phase-1 Hyperparameters}
+\subsection{Hyperparameters}
 
 \begin{table}[H]
 \centering
@@ -364,125 +258,27 @@ Algorithm           & PPO (Stable-Baselines3) & Stable on discrete spaces \\
 Policy network      & MLP, 2$\times$128 ReLU  & Lightweight for fast inference \\
 Learning rate       & $3\times10^{-4}$         & Adam optimiser \\
 Clip range ($\epsilon$) & 0.2              & Conservative updates \\
-Rollout buffer      & 2048 steps               & 5-s step $\Rightarrow$ $\sim$170 min \\
+Rollout buffer      & 2048 steps               & $\sim$170 min at 5-s steps \\
 Batch size          & 64                       & Fits in 256 MB RAM \\
-Update epochs       & 10                       & Per rollout \\
 Discount $\gamma$   & 0.99                     & Long-horizon planning \\
-Entropy coefficient & 0.01                     & Encourage exploration \\
 Total timesteps     & 100,000                  & $\sim$8 min on M2 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{OpenFaaS Serverless Deployment}
 \label{sec:openfaas}
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
+Embedding the RL engine inside the Spark Driver creates tight coupling. OpenFaaS
+decouples the scaling logic as an independent HTTP microservice with three key benefits:
+\textbf{scale-to-zero} (zero idle cost after 5 min inactivity),
+\textbf{independent updates} (hot-swap new models without redeploying Spark), and
+\textbf{language isolation} (Python/PyTorch behind a JSON-over-HTTP interface).
 
-\subsection{Rationale}
-
-Embedding the RL inference engine inside the Spark Driver introduces tight coupling: the
-RL agent cannot be updated, restarted, or independently scaled without interrupting live
-stream processing. OpenFaaS solves this by treating the scaling logic as an independent
-HTTP microservice:
-
-\begin{itemize}
-  \item \textbf{Scale-to-Zero}: With \texttt{com.openfaas.scale.zero: "true"}, the
-        function container is destroyed after 5 minutes of inactivity, incurring zero
-        idle cost during off-peak periods.
-  \item \textbf{Independent Updates}: A new RL model can be pushed and hot-swapped
-        without redeploying Spark.
-  \item \textbf{Language Isolation}: Spark executes on the JVM; the RL agent runs in
-        Python with PyTorch. OpenFaaS bridges them via JSON over HTTP.
-\end{itemize}
-
-\subsection{OpenFaaS Stack Configuration}
-
-The deployment descriptor (\texttt{stack.yml}) captures all runtime behaviour:
-
-\begin{lstlisting}[language=yaml, caption={OpenFaaS stack.yml for the rl-scaling-function}]
-version: 1.0
-provider:
-  name: openfaas
-  gateway: http://127.0.0.1:8080
-
-functions:
-  rl-scaling:
-    lang: python3-http
-    handler: ./rl-scaling-function
-    image: rl-scaling-function:latest
-    environment:
-      MODEL_PATH: /home/app/function/models/rl_optimizer
-      PREWARM_ENABLED: "true"
-      COLD_START_PENALTY_MS: "15000"
-    labels:
-      com.openfaas.scale.min:           "1"
-      com.openfaas.scale.max:           "5"
-      com.openfaas.scale.zero:          "true"
-      com.openfaas.scale.zero-duration: "5m"
-    limits:
-      memory: 256Mi
-      cpu:    200m
-\end{lstlisting}
-
-\subsection{Function Handler}
-
-The \texttt{handle(req)} entry-point accepts a JSON payload and routes it through the
-scaling decision cascade:
-
-\begin{lstlisting}[language=Python, caption={OpenFaaS handler entry-point (handler.py)}]
-def handle(req):
-    """
-    OpenFaaS HTTP handler.
-    Input:  JSON string with Spark / IoT metrics
-    Output: JSON scaling decision
-    """
-    try:
-        metrics = json.loads(req)
-    except json.JSONDecodeError:
-        return json.dumps({"error": "Invalid JSON", "action": "maintain"})
-
-    # Attempt to load pre-trained PPO model (first call only)
-    if handler.model is None:
-        handler.load_model()
-
-    decision = handler.get_scaling_decision(metrics)
-    return json.dumps(decision)
-\end{lstlisting}
-
-\subsection{Request / Response Contract}
-
-\textbf{Request} (Spark telemetry agent $\rightarrow$ OpenFaaS gateway):
-\begin{lstlisting}[language=json, caption={Example JSON request sent to rl-scaling-function}]
-{
-  "workload_rate":     342,
-  "cpu_util":           87,
-  "mem_util":           71,
-  "latency_ms":        220,
-  "current_executors":   8,
-  "alpha":            0.15,
-  "beta":             0.72,
-  "gamma":            0.13,
-  "burst_probability": 0.74,
-  "traffic_velocity":  48.5,
-  "edge_burst_signal": 0.81
-}
-\end{lstlisting}
-
-\textbf{Response} (OpenFaaS $\rightarrow$ Spark Driver Client):
-\begin{lstlisting}[language=json, caption={Example JSON response from rl-scaling-function}]
-{
-  "action":           "pre_warm",
-  "target_executors":       14,
-  "executors_to_add":        6,
-  "pre_warm_count":          6,
-  "reason": "Pattern detected: burst_prob=0.74, velocity=48.5. Pre-warming 6 executors.",
-  "confidence":           0.92
-}
-\end{lstlisting}
-
-\subsection{Invocation Latency}
+The function accepts a JSON payload of Spark/IoT telemetry (workload rate, CPU/memory
+utilisation, latency, RL weights, burst probability) and returns a concrete scaling
+decision (action, target executors, reasoning string, confidence score).
 
 \begin{table}[H]
 \centering
@@ -499,18 +295,13 @@ With PPO model loaded       & $\sim$12 ms  & $\sim$22 ms    \\
 \end{tabular}
 \end{table}
 
-\noindent Since the function is configured with \texttt{scale.min: 1}, one replica
-always remains warm during active workload periods, keeping the decision latency under
-15 ms in all non-idle scenarios.
+\noindent With \texttt{scale.min: 1}, one replica stays warm during active periods,
+keeping decision latency under 15 ms in all non-idle scenarios.
 
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Final Five-Layer System Architecture}
 \label{sec:final_arch}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Figure~\ref{fig:final_arch} shows the complete five-layer architecture of the
-Serverless Spark IoT Framework after integrating the Two-RL system and OpenFaaS.
+% ─────────────────────────────────────────────────────────────
 
 \begin{figure}[H]
 \centering
@@ -542,8 +333,6 @@ Serverless Spark IoT Framework after integrating the Two-RL system and OpenFaaS.
 \draw[arr, l2c] (L2) -- (L3);
 \draw[arr, l3c] (L3) -- (L4);
 \draw[arr, l4c] (L4) -- (L5);
-
-% feedback arrows
 \draw[arr, l5c, dashed] (L5.east) to[bend left=55]
     node[right, font=\scriptsize]{reward} (L3.east);
 \draw[arr, l1c, dashed] (L1.west) to[bend right=55]
@@ -553,57 +342,36 @@ Serverless Spark IoT Framework after integrating the Two-RL system and OpenFaaS.
 \label{fig:final_arch}
 \end{figure}
 
-\noindent The end-to-end data flow proceeds as follows:
-\begin{enumerate}
-  \item IoT sensors push telemetry to the Edge Gateway. The gateway computes $P_{burst}$
-        and forwards both the raw payload and the burst signal downstream.
-  \item High-throughput data flows through \textbf{Kafka} topics; lightweight burst
-        alerts flow through \textbf{MQTT} to avoid congestion on the control path.
-  \item The \textbf{L3 Optimization Engine} consumes Kafka metrics. TD3 derives the
-        current $(\alpha,\beta,\gamma)$ weighting and passes it to PPO. PPO selects the
-        appropriate scaling action.
-  \item The action is sent as a JSON request to the \textbf{L4 OpenFaaS} gateway,
-        which invokes \texttt{rl-scaling-function}. The function returns a concrete
-        executor target.
-  \item The \textbf{Spark Driver Client} invokes the Spark cluster REST API to add or
-        remove executors accordingly.
-  \item The resulting performance metrics (latency, cost, throughput) feed back into L3
-        as the step reward for PPO and episode statistics for TD3, closing the loop.
-\end{enumerate}
+\noindent Data flows from IoT sensors through Kafka/MQTT ingestion to the L3 optimisation
+engine, where TD3 derives $(\alpha,\beta,\gamma)$ and PPO selects a scaling action. The
+action is sent to the OpenFaaS gateway, which returns a concrete executor target. The
+Spark Driver adjusts cluster resources, and resulting performance metrics feed back as
+rewards, closing both RL loops.
 
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Benchmark Results}
 \label{sec:results_hier}
-% ──────────────────────────────────────────────────────────────────────────────
-
-\subsection{Overall Comparison: Four Policies}
-
-Table~\ref{tab:four_policy_compare} compares the two-RL + OpenFaaS system (\textbf{RL-Spark})
-against three baseline policies across all evaluation scenarios.
+% ─────────────────────────────────────────────────────────────
 
 \begin{table}[H]
 \centering
 \caption{Policy comparison across all evaluation scenarios}
 \label{tab:four_policy_compare}
-\begin{tabular}{lcccc}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{p{3.8cm}p{2.0cm}p{2.2cm}p{2.2cm}p{2.3cm}}
 \toprule
 \textbf{Policy}   & \textbf{Total Cost} & \textbf{P95 Latency} &
   \textbf{SLA Violations} & \textbf{Verdict} \\
 \midrule
 Traditional Fixed (15 exec) & \$41.25 & 1,534 ms & 90.0\% & Over-provisioned \\
 Dexter (HPA)                & \$32.99 & 1,159 ms & 54.4\% & Reactive lag     \\
-Seer (Linear Predictor)     & \$35.40 & 1,247 ms & 100.0\%& Non-linear fail  \\
+Seer (Linear Predictor)     & \$35.40 & 1,247 ms & 100.0\% & Non-linear fail \\
 \textbf{RL-Spark (Ours)}    & \textbf{\$26.20} & \textbf{119 ms} &
   \textbf{0.0\%} & \textbf{Best overall} \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
-
-\subsection{SLA Violation Rate}
-
-Figure~\ref{fig:sla_bar} visualises the SLA violation rates. RL-Spark achieves 0
-violations across all three test scenarios.
 
 \begin{figure}[H]
 \centering
@@ -614,29 +382,20 @@ violations across all three test scenarios.
     ylabel={SLA Violation Rate (\%)},
     title={\textbf{SLA Violation Rate by Policy}},
     symbolic x coords={Traditional, Dexter (HPA), Seer, RL-Spark},
-    xtick=data,
-    ymin=0, ymax=115,
-    nodes near coords,
-    nodes near coords align=vertical,
+    xtick=data, ymin=0, ymax=115,
+    nodes near coords, nodes near coords align=vertical,
     every node near coord/.append style={font=\small\bfseries},
-    grid=major, grid style={gray!25},
-    legend pos=north east, legend style={font=\footnotesize}
+    grid=major, grid style={gray!25}
 ]
-\addplot[fill=red!65]    coordinates {(Traditional,90.0)};
-\addplot[fill=purple!55] coordinates {(Dexter (HPA),54.4)};
+\addplot[fill=red!65]           coordinates {(Traditional,90.0)};
+\addplot[fill=purple!55]        coordinates {(Dexter (HPA),54.4)};
 \addplot[fill=yellow!70!orange] coordinates {(Seer,100.0)};
-\addplot[fill=green!55]  coordinates {(RL-Spark,0.0)};
+\addplot[fill=green!55]         coordinates {(RL-Spark,0.0)};
 \end{axis}
 \end{tikzpicture}
 \caption{SLA violation rates across all four evaluated policies.}
 \label{fig:sla_bar}
 \end{figure}
-
-\subsection{Latency Timeline Over a 24-Hour IoT Day}
-
-Figure~\ref{fig:latency_timeline} shows how each policy responds to a realistic
-24-hour workload profile containing a night-idle period, a morning mega-spike, and
-an evening surge.
 
 \begin{figure}[H]
 \centering
@@ -646,8 +405,7 @@ an evening surge.
     xlabel={Hour of Day}, ylabel={Latency (ms)},
     title={\textbf{Latency Timeline — 24-Hour IoT Day}},
     grid=major, grid style={gray!25},
-    ymin=0, ymax=2300,
-    xmin=0, xmax=24,
+    ymin=0, ymax=2300, xmin=0, xmax=24,
     legend pos=north west, legend style={font=\footnotesize},
     xtick={0,4,8,12,16,20,24}
 ]
@@ -664,63 +422,48 @@ an evening surge.
 \addlegendentry{SLA limit (1000 ms)}
 \end{axis}
 \end{tikzpicture}
-\caption{RL-Spark stays below the 1,000 ms SLA limit throughout. Flat segments at 0 ms
-represent scale-to-zero periods (free).}
+\caption{RL-Spark stays below the 1,000 ms SLA limit throughout the 24-hour profile.
+Zero-latency segments represent scale-to-zero periods.}
 \label{fig:latency_timeline}
 \end{figure}
-
-\subsection{Improvement Summary}
 
 \begin{table}[H]
 \centering
 \caption{Key improvements of Two-RL + OpenFaaS over Traditional Fixed Spark}
 \label{tab:improvement_summary}
-\begin{tabular}{lccc}
+{\small
+\begin{tabular}{@{}lccc@{}}
 \toprule
 \textbf{Metric} & \textbf{Traditional} & \textbf{RL-Spark} & \textbf{Improvement} \\
 \midrule
-Average Latency      & 245 ms   & \textbf{119 ms}  & $-$51.6\%     \\
-SLA Compliance       & 81.5\%   & \textbf{100\%}   & +18.5 pts     \\
-Hourly Cost          & \$8.50   & \textbf{\$6.20}  & $-$27.1\%     \\
-Scaling Reaction     & 60 s     & \textbf{5 s}     & 12$\times$ faster \\
-SLA Violations       & 12 / 65  & \textbf{0 / 68}  & Eliminated    \\
-Cold Starts          & 7        & \textbf{0}       & Eliminated    \\
-Idle Cost (night)    & \$11.25  & \textbf{\$0.50}  & $-$95.6\%     \\
-Max Throughput       & 750 msg/s & \textbf{1,650 msg/s} & 2.2$\times$ \\
+Average Latency   & 245 ms    & \textbf{119 ms}      & $-$51.6\%         \\
+SLA Compliance    & 81.5\%    & \textbf{100\%}       & +18.5 pts         \\
+Hourly Cost       & \$8.50    & \textbf{\$6.20}      & $-$27.1\%         \\
+Scaling Reaction  & 60 s      & \textbf{5 s}         & 12$\times$ faster \\
+SLA Violations    & 12 / 65   & \textbf{0 / 68}      & Eliminated        \\
+Cold Starts       & 7         & \textbf{0}           & Eliminated        \\
+Idle Cost (night) & \$11.25   & \textbf{\$0.50}      & $-$95.6\%         \\
+Max Throughput    & 750 msg/s & \textbf{1,650 msg/s} & 2.2$\times$       \\
 \bottomrule
 \end{tabular}
+}
 \end{table}
 
-
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Summary}
 \label{sec:summary_hier}
-% ──────────────────────────────────────────────────────────────────────────────
-
-This chapter has presented the complete design, implementation, and evaluation of the
-Hierarchical Two-Phase RL system and its serverless deployment via OpenFaaS.
-
-The four primary contributions of this chapter are:
+% ─────────────────────────────────────────────────────────────
+This chapter presented the design, implementation, and evaluation of the Hierarchical
+Two-Phase RL system and its OpenFaaS serverless deployment. Four primary contributions
+were made:
 \begin{enumerate}
-  \item \textbf{TD3 Meta-Controller (Phase 2):} A continuous-action, twin-critic agent
-        that learns to shift the reward-weight vector $[\alpha, \beta, \gamma]$ based on
-        episode-level workload health. The convergence analysis (Figure~\ref{fig:weight_convergence})
-        confirms that the agent correctly reduces cost priority and increases latency
-        priority as training progresses.
-  \item \textbf{Adaptive PPO Resource Agent (Phase 1):} An enhanced agent whose
-        dynamic reward function is fully parameterised by Phase-2 weights, enabling
-        it to switch between cost-optimal and latency-optimal behaviours without
-        retraining.
-  \item \textbf{OpenFaaS Serverless Deployment:} Packaging the inference engine as an
-        event-driven function decouples the RL brain from the Spark cluster, achieves
-        scale-to-zero cost elimination, and enforces a clean JSON contract between
-        components.
-  \item \textbf{Measured Results:} The combined system eliminates SLA violations
-        entirely (0 vs.\ 12 for the fixed baseline), reduces average latency by 51.6\%,
-        cuts idle cost by 95.6\%, and reduces overall cost by 27.1\% — all
-        simultaneously.
+  \item \textbf{TD3 Meta-Controller (Phase 2):} Learns to shift $[\alpha,\beta,\gamma]$
+        episode-by-episode, reducing cost priority and increasing latency priority as
+        confirmed by the convergence analysis.
+  \item \textbf{Adaptive PPO Resource Agent (Phase 1):} Dynamic reward parameterisation
+        enables cost-optimal / latency-optimal switching without retraining.
+  \item \textbf{OpenFaaS Deployment:} Decouples the RL brain from Spark, achieves
+        scale-to-zero cost elimination, and enforces a clean JSON API contract.
+  \item \textbf{Measured Results:} Zero SLA violations, $-$51.6\% latency, $-$27.1\%
+        cost, and $-$95.6\% idle cost — all simultaneously versus the fixed baseline.
 \end{enumerate}
-
-Together, these innovations demonstrate that hierarchical reinforcement learning,
-deployed through a serverless function gateway, is a practical and highly effective
-approach to autonomous resource management in real-time IoT data processing frameworks.

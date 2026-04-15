@@ -1,135 +1,56 @@
 % ============================================================
 %  Chapter: Reinforcement Learning-Based Resource Optimizer
-%  ~10 pages | TikZ + pgfplots + lstlisting + booktabs tables
+%  Compact version — all diagrams retained, key tables only
 % ============================================================
 \chapter{Reinforcement Learning-Based Resource Optimizer}
 \label{chap:rl_optimizer}
 
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
 \section{Introduction}
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
+This chapter describes the RL-based resource optimizer that dynamically allocates
+Apache Spark computing resources to balance latency, cost, and throughput. The
+optimizer employs \textbf{Proximal Policy Optimization (PPO)} to learn optimal
+configurations by interacting with a simulated Spark cluster offline, then applies
+those strategies in real time every 5 seconds during live streaming.
 
-This chapter provides a comprehensive description of the design, architecture, and
-functioning of the Reinforcement Learning (RL)--based resource optimizer developed as
-part of the Serverless Spark IoT Framework. The optimizer forms the intelligent
-decision-making layer that dynamically allocates computing resources in Apache Spark to
-balance latency, cost, and throughput under continuously varying IoT workloads.
+Static Spark configurations suffer from over-provisioning (wasted cost during idle),
+under-provisioning (SLA violations during bursts with 45--60~s cold-start lag),
+and single-objective tuning. RL overcomes all three by continuously learning a
+multi-objective policy that adapts proactively.
 
-Unlike traditional rule-based scaling systems that rely on static thresholds, this
-optimizer continuously learns and adapts its strategy by interacting with the environment,
-much like how a seasoned human operator develops intuition from past decisions. It
-employs \textbf{Proximal Policy Optimization (PPO)}, a state-of-the-art deep
-reinforcement learning algorithm, to discover optimal resource allocation strategies
-through guided trial and reward feedback.
-
-The rest of this chapter is organized as follows. Section~\ref{sec:motivation_rl}
-motivates the need for an RL-based approach. Section~\ref{sec:rl_framework} introduces
-the formal RL framework. Section~\ref{sec:arch_rl} presents the system architecture.
-Sections~\ref{sec:state_rl}--\ref{sec:reward_rl} detail the MDP formulation.
-Sections~\ref{sec:env_impl}--\ref{sec:nn_arch} cover the implementation, training, and
-neural network design. Sections~\ref{sec:training_rl}--\ref{sec:deploy_rl} address
-training results and deployment integration.
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Motivation}
-\label{sec:motivation_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Serverless data analytics platforms such as Apache Spark, AWS Glue, and Google Dataflow
-are increasingly used to process large volumes of IoT data in real time. However, they
-suffer from several systemic limitations when operated with static configuration:
-
-\begin{itemize}
-    \item \textbf{Over-provisioning:} Setting a fixed executor count for peak workloads
-          wastes compute resources during idle periods, inflating costs unnecessarily.
-    \item \textbf{Under-provisioning:} Sizing for average load causes SLA violations
-          when sudden traffic bursts arrive, because reactive scalers introduce a
-          45--60~second cold-start delay before new executors are available.
-    \item \textbf{Single-objective tuning:} Manually chosen thresholds optimise for
-          one metric (e.g., utilisation) while inadvertently degrading others (e.g.,
-          latency or cost).
-\end{itemize}
-
-\noindent Table~\ref{tab:scaling_comparison} summarises the fundamental differences
-between traditional and RL-based scaling strategies.
-
-\begin{table}[H]
-\centering
-\caption{Comparison of traditional versus RL-based Spark resource scaling}
-\label{tab:scaling_comparison}
-\begin{tabular}{lll}
-\toprule
-\textbf{Aspect} & \textbf{Traditional (Fixed / HPA)} & \textbf{RL-Based (This Work)} \\
-\midrule
-Configuration    & Static, set at deploy time    & Continuously learned           \\
-Reaction speed   & 45--60 s (cold start)         & 5 s (proactive)                \\
-Objectives       & Single (utilisation)          & Multi (cost, latency, throughput)\\
-Idle behaviour   & Always-on (wastes \$\$)       & Scale-to-zero                  \\
-Adaptability     & None (requires manual retune) & Automatic (online updates)     \\
-Cold start       & 7 cold starts observed        & 0 (pre-warmed by RL)           \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent An intelligent optimizer is therefore required---one that \textbf{learns} system
-behaviour dynamically, \textbf{adapts} to unseen workloads automatically, and
-\textbf{balances} conflicting metrics using multi-objective optimisation. Reinforcement
-Learning provides the ideal paradigm for this challenge.
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Conceptual Framework of Reinforcement Learning}
+% ─────────────────────────────────────────────────────────────
+\section{RL Framework and Architecture}
 \label{sec:rl_framework}
-% ──────────────────────────────────────────────────────────────────────────────
+% ─────────────────────────────────────────────────────────────
+The problem is modelled as an MDP
+$\mathcal{M} = \langle \mathcal{S}, \mathcal{A}, P, R, \gamma \rangle$,
+where the agent maximises:
+$J(\pi_\theta) = \mathbb{E}_{\pi_\theta}[\sum_{t=0}^{T} \gamma^t r_t]$.
 
-Reinforcement learning is a branch of machine learning in which an \textit{agent}
-interacts with an \textit{environment} through a sequence of observations, decisions,
-and rewards. The learning process is formally modelled as a Markov Decision Process (MDP):
-\[
-  \mathcal{M} = \langle \mathcal{S},\; \mathcal{A},\; P,\; R,\; \gamma \rangle
-\]
-\begin{itemize}
-  \item $\mathcal{S}$ -- state space representing the full observable system condition.
-  \item $\mathcal{A}$ -- action space encoding all possible control decisions.
-  \item $P(s'\!\mid\!s,a)$ -- transition probability from state $s$ to $s'$ under action $a$.
-  \item $R(s,a)$ -- scalar reward measuring the quality of a decision.
-  \item $\gamma \in [0,1)$ -- discount factor balancing immediate vs.\ future rewards.
-\end{itemize}
-
-\noindent Mapped onto the Spark resource management problem:
 \begin{center}
 \begin{tikzpicture}[
     box/.style={rectangle, draw, rounded corners=4pt, minimum width=3.5cm,
                 minimum height=0.85cm, font=\footnotesize, align=center},
     lbl/.style={font=\scriptsize, gray}
 ]
-\node[box, fill=blue!10]   (agent) at (0,0)    {RL Agent\\(PPO Policy)};
-\node[box, fill=orange!15] (env)   at (7,0)    {Spark Environment\\(Simulated Cluster)};
-
+\node[box, fill=blue!10]   (agent) at (0,0)  {RL Agent\\(PPO Policy)};
+\node[box, fill=orange!15] (env)   at (7,0)  {Spark Environment\\(Simulated Cluster)};
 \draw[-{Stealth[length=2.5mm]}, thick, green!60!black]
-    (agent.north) -- ++(0,0.6) -- node[above, font=\scriptsize]{action $a_t$ (executors, memory)} ++(7,0) -- (env.north);
+    (agent.north) -- ++(0,0.6) --
+    node[above, font=\scriptsize]{action $a_t$ (executors, memory, tier)}
+    ++(7,0) -- (env.north);
 \draw[-{Stealth[length=2.5mm]}, thick, red!60]
-    (env.south) -- ++(0,-0.6) -- node[below, font=\scriptsize]{state $s_{t+1}$, reward $r_t$} ++(-7,0) -- (agent.south);
-
-\node[lbl] at (3.5, 1.2)  {Control Action};
-\node[lbl] at (3.5, -1.2) {Observation + Feedback};
+    (env.south) -- ++(0,-0.6) --
+    node[below, font=\scriptsize]{state $s_{t+1}$, reward $r_t$}
+    ++(-7,0) -- (agent.south);
+\node[lbl] at (3.5, 1.2) {Control Action};
+\node[lbl] at (3.5,-1.2) {Observation + Feedback};
 \end{tikzpicture}
 \end{center}
 
-\noindent The agent's objective is to find an optimal policy $\pi^*(a \mid s)$ that maximises the expected discounted return over a full episode:
-\[
-  J(\pi_\theta) = \mathbb{E}_{\pi_\theta}\!\left[\sum_{t=0}^{T} \gamma^t\, r_t\right]
-\]
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Architecture Overview}
-\label{sec:arch_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Figure~\ref{fig:rl_arch} shows the closed-loop architecture connecting the PPO agent
-to the simulated Spark cluster.
+\noindent Figure~\ref{fig:rl_arch} shows the closed-loop architecture running every
+5 seconds: observe $\to$ act $\to$ simulate $\to$ reward $\to$ update.
 
 \begin{figure}[H]
 \centering
@@ -139,119 +60,50 @@ to the simulated Spark cluster.
     arr/.style={-{Stealth[length=2.5mm]}, thick},
     scale=0.9, transform shape
 ]
-% Nodes
-\node[block, fill=green!12, draw=green!60!black] (ppo)    at (0, 0)    {PPO Agent\\(Policy Network)};
-\node[block, fill=blue!10,  draw=blue!50]        (state)  at (5, 1.8)  {State\\Extractor};
-\node[block, fill=orange!15,draw=orange!70]      (spark)  at (10, 0)   {Spark\\Environment};
-\node[block, fill=red!10,   draw=red!60]         (reward) at (5,-1.8)  {Reward\\Calculator};
+\node[block, fill=green!12, draw=green!60!black] (ppo)   at (0,0)    {PPO Agent\\(Policy Network)};
+\node[block, fill=blue!10,  draw=blue!50]        (state) at (5,1.8)  {State\\Extractor};
+\node[block, fill=orange!15,draw=orange!70]      (spark) at (10,0)   {Spark\\Environment};
+\node[block, fill=red!10,   draw=red!60]         (rew)   at (5,-1.8) {Reward\\Calculator};
 
-% Arrows
-\draw[arr, green!60!black] (ppo.east)   -- node[above,font=\scriptsize]{action $a_t$} (spark.west);
+\draw[arr, green!60!black] (ppo.east)    -- node[above,font=\scriptsize]{action $a_t$} (spark.west);
 \draw[arr, blue!60]        (spark.north) -- ++(0,0.6) -| node[above,font=\scriptsize,near start]{metrics} (state.east);
 \draw[arr, blue!60]        (state.west)  -- node[above,font=\scriptsize]{$s_t$} (ppo.north east);
-\draw[arr, red!60]         (spark.south) -- ++(0,-0.6) -| node[below,font=\scriptsize,near start]{perf. signal} (reward.east);
-\draw[arr, red!60]         (reward.west) -- node[below,font=\scriptsize]{$r_t$} (ppo.south east);
-
-% Step labels
-\node[font=\scriptsize, gray] at (5, 0.8) {\textbf{Step 1:} Observe};
-\node[font=\scriptsize, gray] at (5,-0.8) {\textbf{Step 4:} Reward};
-\node[font=\scriptsize, gray] at (2.2, 0.35) {\textbf{Step 2:} Act};
-\node[font=\scriptsize, gray] at (7.8, 0.35) {\textbf{Step 3:} Simulate};
+\draw[arr, red!60]         (spark.south) -- ++(0,-0.6) -| node[below,font=\scriptsize,near start]{perf.} (rew.east);
+\draw[arr, red!60]         (rew.west)    -- node[below,font=\scriptsize]{$r_t$} (ppo.south east);
 \end{tikzpicture}
-\caption{RL closed-loop architecture: Agent observes state, selects action, environment
-simulates response, reward is computed, and the policy is updated accordingly.}
+\caption{RL closed-loop: observe state, select action, simulate, compute reward, update policy.}
 \label{fig:rl_arch}
 \end{figure}
 
-\noindent The five-step decision cycle runs continuously during training and once per
-micro-batch interval (every 5 seconds) during live inference:
+% ─────────────────────────────────────────────────────────────
+\section{MDP Formulation}
+\label{sec:mdp_rl}
+% ─────────────────────────────────────────────────────────────
 
-\begin{center}
-\fbox{\begin{minipage}{0.93\textwidth}
-\textbf{Step 1 — Observe:} The environment reports workload, CPU, memory, latency, cost.\\[3pt]
-\textbf{Step 2 — Act:} The agent selects an executor count, memory allocation, and action type.\\[3pt]
-\textbf{Step 3 — Simulate:} The environment computes the resulting system state.\\[3pt]
-\textbf{Step 4 — Reward:} A scalar reward based on the new cost, latency, and throughput is returned.\\[3pt]
-\textbf{Step 5 — Update:} The PPO policy network is updated via gradient ascent on the clipped objective.\\[3pt]
-\textit{Repeat for 50,000 timesteps (approximately 8 minutes on Apple M2).}
-\end{minipage}}
-\end{center}
+\textbf{State:} A 6-dimensional normalised snapshot
+$s_t = [\lambda_t, V_t, U^{cpu}_t, U^{mem}_t, L_t, C_t]$
+(workload rate, data volume, CPU/memory utilisation, latency, cost), z-scored before
+entering the network.
 
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{State Representation}
-\label{sec:state_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Each state vector $s_t$ encodes a 6-dimensional snapshot of the Spark cluster,
-normalised to $[0,1]$:
-\[
-  s_t = \bigl[\lambda_t,\; V_t,\; U^{cpu}_t,\; U^{mem}_t,\; L_t,\; C_t\bigr]
-\]
-
-\begin{table}[H]
-\centering
-\caption{State vector components and their normalisation}
-\label{tab:state_space}
-\begin{tabular}{clccc}
-\toprule
-\textbf{Index} & \textbf{Variable} & \textbf{Symbol} & \textbf{Raw Range} & \textbf{Normalised by} \\
-\midrule
-0 & Workload rate       & $\lambda_t$       & 0--500 msg/s   & 500   \\
-1 & Data volume         & $V_t$             & 0--500 MB      & 500   \\
-2 & CPU utilisation     & $U^{cpu}_t$       & 0--100\%       & 100   \\
-3 & Memory utilisation  & $U^{mem}_t$       & 0--100\%       & 100   \\
-4 & Latency             & $L_t$             & 0--1000 ms     & 1000  \\
-5 & Cost                & $C_t$             & 0--\$10/hr     & 10    \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent All six features are z-scored to zero mean and unit variance before being
-fed into the neural network, ensuring that no single dimension dominates gradient updates
-during early training.
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Action Representation}
-\label{sec:action_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The action space is a \texttt{MultiDiscrete} Gymnasium space encoding three independent
-choices:
-\[
-  a_t = [E_t,\; M_t,\; T_t]
-\]
-\begin{itemize}
-  \item $E_t \in \{1, 2, \ldots, 20\}$ --- number of Spark executors.
-  \item $M_t \in \{1, 2, \ldots, 8\}$ --- memory per executor (GB).
-  \item $T_t \in \{0,1,2,3\}$ --- storage tier (Redis HOT, NVMe WARM, S3 COLD, Glacier ARCHIVE).
-\end{itemize}
-
-This gives $20 \times 8 \times 4 = 640$ discrete combinations, small enough for PPO to
-explore thoroughly within 50,000 steps. Figure~\ref{fig:action_space} visualises the
-action space coverage across executor counts and memory configurations.
+\textbf{Action:} A \texttt{MultiDiscrete} space $a_t = [E_t, M_t, T_t]$ —
+executors ($1$--$20$), memory ($1$--$8$ GB), storage tier (Redis/NVMe/S3/Glacier) —
+yielding 640 configurations. Figure~\ref{fig:action_space} visualises the coverage.
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
     width=11cm, height=5.5cm,
-    xlabel={Number of Executors ($E_t$)},
-    ylabel={Memory per Executor -- GB ($M_t$)},
-    title={\textbf{Action Space Coverage (640 Configurations)}},
+    xlabel={Executors ($E_t$)}, ylabel={Memory — GB ($M_t$)},
+    title={\textbf{Action Space (640 Configurations)}},
     xmin=0.5, xmax=20.5, ymin=0.5, ymax=8.5,
     xtick={1,5,10,15,20}, ytick={1,2,4,6,8},
     grid=major, grid style={gray!20},
     colorbar, colormap={rlcmap}{color(0)=(blue!20) color(1)=(green!70!black)},
     point meta min=0, point meta max=1,
-    colorbar style={title={Cost tier}, ytick={0,0.5,1},
-                    yticklabels={Low,Med,High}}
+    colorbar style={title={Cost}, ytick={0,0.5,1}, yticklabels={Low,Med,High}}
 ]
-% Scatter plot: colour = relative cost (E*M / 160 normalised)
-\addplot[
-    scatter, scatter src=explicit,
-    only marks, mark=square*, mark size=3.5pt, opacity=0.7
+\addplot[scatter, scatter src=explicit, only marks, mark=square*, mark size=3.5pt, opacity=0.7
 ] coordinates {
     (1,1)[0.006] (1,2)[0.013] (1,4)[0.025] (1,8)[0.050]
     (2,1)[0.013] (2,2)[0.025] (2,4)[0.050] (2,8)[0.100]
@@ -267,451 +119,154 @@ action space coverage across executor counts and memory configurations.
 };
 \end{axis}
 \end{tikzpicture}
-\caption{Action space heat-map: each square represents one $(E_t, M_t)$ configuration.
-Colour encodes relative cost. The RL agent learns which region of this space minimises
-the multi-objective reward for each workload intensity.}
+\caption{Action space heat-map. Colour encodes relative cost; the RL agent learns
+which region minimises the multi-objective reward per workload intensity.}
 \label{fig:action_space}
 \end{figure}
 
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Transition Dynamics}
-\label{sec:transition_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The simulated Spark environment advances the state according to physics-inspired
-transition equations that mimic real cluster behaviour:
+\textbf{Transition dynamics} use physics-inspired equations capturing the key
+resource-performance trade-offs:
 \begin{align}
-U^{cpu}_{t+1}  &= \min\!\left(100,\;\frac{\lambda_t}{E_t\,\phi_{cpu}}\right), \\[4pt]
-U^{mem}_{t+1}  &= \min\!\left(100,\;\frac{V_t}{E_t\,M_t\,\phi_{mem}}\right), \\[4pt]
-L_{t+1}        &= L_{base}\,\frac{\lambda_t}{E_t\,M_t}\,\kappa_{T_t},        \\[4pt]
-C_{t+1}        &= E_t\,c_e + E_t\,M_t\,c_m + c_{T_t}
+U^{cpu}_{t+1} &= \min(100,\;\lambda_t / E_t\phi_{cpu}), &
+L_{t+1}       &= L_{base}\,\lambda_t\,\kappa_{T_t} / (E_t M_t), \\
+U^{mem}_{t+1} &= \min(100,\;V_t / E_t M_t\phi_{mem}), &
+C_{t+1}       &= E_t c_e + E_t M_t c_m + c_{T_t}
 \end{align}
 
-\noindent where $\phi_{cpu}$ and $\phi_{mem}$ are empirical throughput constants,
-$\kappa_{T_t}$ is a storage-tier latency multiplier
-($\kappa_0{=}0.5$ for Redis, $\kappa_1{=}1.0$ for NVMe, $\kappa_2{=}3.0$ for S3),
-and $c_e$, $c_m$, $c_{T_t}$ are unit cost coefficients.
-
-This formulation allows the agent to train for millions of simulated steps without
-requiring a live Spark cluster, while preserving the key relationships between
-resources, utilisation, latency, and cost.
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Reward Function}
-\label{sec:reward_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The agent receives a scalar reward at every step that encodes three competing
-objectives simultaneously:
-\[
-  R_t = -0.4\,\frac{C_t}{C_{\max}} - 0.4\,\frac{L_t}{L_{\max}} + 0.2\,\frac{P_t}{P_{\max}}
-\]
-The reward is designed so that:
-\begin{itemize}
-  \item \textbf{Cost and latency are penalised equally} (weight 0.4 each), reflecting
-        typical SLA contracts that cap both dimensions.
-  \item \textbf{Throughput is rewarded} (weight 0.2) to encourage the agent to maintain
-        productive cluster utilisation rather than simply shutting down executors.
-  \item All terms are normalised by their empirical maxima ($C_{\max}$, $L_{\max}$,
-        $P_{\max}$) so that no single objective dominates the gradient signal due to
-        scale differences.
-\end{itemize}
-
-\noindent Figure~\ref{fig:reward_surface} illustrates how the reward landscape changes
-with executor count and memory, for a moderate workload of 200 msg/s.
+\textbf{Reward:}
+$R_t = -0.4\,C_t/C_{\max} - 0.4\,L_t/L_{\max} + 0.2\,P_t/P_{\max}$.
+Cost and latency are penalised equally; throughput is rewarded to prevent trivial
+shutdown. Figure~\ref{fig:reward_surface} shows the reward landscape at 200~msg/s.
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=13cm, height=6.0cm,
-    xlabel={Executors ($E_t$)},
-    ylabel={Reward $R_t$},
-    title={\textbf{Reward as a Function of Executor Count (Workload = 200 msg/s)}},
+    width=13cm, height=5.5cm,
+    xlabel={Executors ($E_t$)}, ylabel={Reward $R_t$},
+    title={\textbf{Reward vs.\ Executor Count (200 msg/s)}},
     grid=major, grid style={gray!25},
     legend pos=south east, legend style={font=\footnotesize},
-    ymin=-1.1, ymax=0.2, xmin=1, xmax=20,
-    xtick={1,4,8,12,16,20}
+    ymin=-1.1, ymax=0.2, xmin=1, xmax=20, xtick={1,4,8,12,16,20}
 ]
-% Memory = 1 GB curve
 \addplot[blue!70, thick, smooth] coordinates {
-    (1,-1.0)(2,-0.85)(3,-0.72)(4,-0.61)(5,-0.52)(6,-0.46)
-    (7,-0.42)(8,-0.40)(9,-0.41)(10,-0.44)(12,-0.52)(15,-0.65)(20,-0.90)};
-\addlegendentry{$M_t = 1$ GB}
-
-% Memory = 4 GB curve
+    (1,-1.0)(2,-0.85)(4,-0.61)(6,-0.46)(8,-0.40)(9,-0.41)(12,-0.52)(20,-0.90)};
+\addlegendentry{$M_t=1$ GB}
 \addplot[green!60!black, thick, smooth] coordinates {
-    (1,-0.95)(2,-0.78)(3,-0.62)(4,-0.50)(5,-0.40)(6,-0.32)
-    (7,-0.27)(8,-0.25)(9,-0.26)(10,-0.30)(12,-0.40)(15,-0.58)(20,-0.85)};
-\addlegendentry{$M_t = 4$ GB}
-
-% Memory = 8 GB curve
+    (1,-0.95)(2,-0.78)(4,-0.50)(6,-0.32)(8,-0.25)(9,-0.26)(12,-0.40)(20,-0.85)};
+\addlegendentry{$M_t=4$ GB}
 \addplot[red!60, thick, smooth] coordinates {
-    (1,-0.90)(2,-0.72)(3,-0.58)(4,-0.46)(5,-0.36)(6,-0.28)
-    (7,-0.22)(8,-0.18)(9,-0.16)(10,-0.17)(11,-0.20)(12,-0.28)(15,-0.48)(20,-0.80)};
-\addlegendentry{$M_t = 8$ GB}
-
-% Optimal region annotation
+    (1,-0.90)(2,-0.72)(4,-0.46)(6,-0.28)(8,-0.18)(9,-0.16)(12,-0.28)(20,-0.80)};
+\addlegendentry{$M_t=8$ GB}
 \draw[dashed, gray] (axis cs:9,-1.1) -- (axis cs:9,0.1)
-    node[above, font=\scriptsize, gray]{Optimal region};
+    node[above, font=\scriptsize, gray]{Optimal};
 \end{axis}
 \end{tikzpicture}
-\caption{Multi-objective reward surface at 200 msg/s. The RL agent discovers the reward
-peak at $E_t \approx 9$, $M_t = 4$--8 GB and learns to avoid both extremes:
-under-provisioning (high latency penalty) and over-provisioning (high cost penalty).}
+\caption{Reward peak at $E_t\approx 9$, $M_t=4$--8 GB — the Pareto-optimal region.}
 \label{fig:reward_surface}
 \end{figure}
 
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{RL Environment Implementation}
-\label{sec:env_impl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The optimizer is trained inside a custom \texttt{SparkResourceEnv} that complies with
-the Gymnasium interface, enabling direct use of Stable-Baselines3 algorithms.
-
-\begin{lstlisting}[language=Python, caption={Spark Resource Environment — Gymnasium Interface}]
-class SparkResourceEnv(gym.Env):
-    """
-    Simulated Spark cluster for offline RL training.
-    Action:  MultiDiscrete([20, 8, 4])  ->  executors, memory, tier
-    State:   Box(6,)  ->  workload, volume, cpu, mem, latency, cost
-    """
-    def __init__(self):
-        super().__init__()
-        self.action_space = spaces.MultiDiscrete([20, 8, 4])
-        self.observation_space = spaces.Box(
-            low=np.zeros(6, dtype=np.float32),
-            high=np.ones(6,  dtype=np.float32))
-        self.state = np.zeros(6, dtype=np.float32)
-
-    def step(self, action):
-        e, m, t = action[0]+1, action[1]+1, action[2]   # 1-indexed
-        workload = self.state[0] * 500                   # de-normalise
-
-        # Transition dynamics
-        latency    = max(10, 100 * workload / (e * m))
-        cost       = e * 0.1 + e * m * 0.05 + [0.1,0.05,0.01,0.001][t]
-        throughput = (e * m) / max(latency, 1e-6)
-
-        # Multi-objective reward
-        reward = (-0.4*(cost/10.0)
-                  -0.4*(latency/1000.0)
-                  +0.2*min(1.0, throughput))
-
-        self.state = np.array(
-            [self.state[0], 100/500, 70/100,
-             55/100, latency/1000, cost/10],
-            dtype=np.float32)
-        return self.state, reward, False, False, {}
-
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        self.state = self.np_random.random(6).astype(np.float32)
-        return self.state, {}
-\end{lstlisting}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{PPO Algorithm and Training Objective}
+% ─────────────────────────────────────────────────────────────
+\section{PPO Algorithm and Network}
 \label{sec:ppo_algo}
-% ──────────────────────────────────────────────────────────────────────────────
-
-PPO updates the policy parameters $\theta$ by maximising a \textit{clipped surrogate
-objective} that prevents destabilising large gradient steps:
-
+% ─────────────────────────────────────────────────────────────
+PPO maximises a clipped surrogate objective within a trust region ($\varepsilon=0.2$):
 \[
-  L^{CLIP}(\theta) = \mathbb{E}_t\!\left[
-    \min\!\left(
-      r_t(\theta)\,\hat{A}_t,\;
-      \mathrm{clip}\!\left(r_t(\theta),\,1-\varepsilon,\,1+\varepsilon\right)\hat{A}_t
-    \right)
-  \right]
+  L^{CLIP}(\theta) = \mathbb{E}_t\!\left[\min\!\left(
+    r_t(\theta)\hat{A}_t,\;
+    \mathrm{clip}(r_t(\theta), 1{-}\varepsilon, 1{+}\varepsilon)\hat{A}_t
+  \right)\right]
 \]
-
-where $r_t(\theta) = \pi_\theta(a_t \mid s_t) \,/\, \pi_{\theta_{\text{old}}}(a_t \mid s_t)$ is the importance-sampling ratio between the new and old policies, $\hat{A}_t$ is the Generalised Advantage Estimate (GAE), and $\varepsilon = 0.2$ is the clip coefficient.
-
-\begin{lstlisting}[language=Python, caption={PPO Clipped Objective (core computation)}]
-def clipped_objective(ratio, advantage, epsilon=0.2):
-    """
-    ratio     : pi_new(a|s) / pi_old(a|s)  -- importance weight
-    advantage : GAE estimate A_hat_t
-    epsilon   : clip coefficient  (default 0.2)
-    """
-    unclipped = ratio * advantage
-    clipped   = torch.clamp(ratio, 1 - epsilon, 1 + epsilon) * advantage
-    # Take the pessimistic (lower) bound
-    return torch.min(unclipped, clipped).mean()
-\end{lstlisting}
-
-\noindent The complete training loss adds a value-function regression term and an
-entropy bonus to encourage exploration:
-\[
-  \mathcal{L}(\theta) = -L^{CLIP}(\theta)
-                      + c_1\,\mathcal{L}_{VF}(\theta)
-                      - c_2\,\mathcal{H}[\pi_\theta]
-\]
-where $c_1 = 0.5$ (value coefficient), $c_2 = 0.01$ (entropy coefficient).
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Agent Implementation: ResourceAllocator Class}
-\label{sec:agent_impl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The \texttt{ResourceAllocator} class wraps the Stable-Baselines3 PPO implementation
-and exposes a clean \texttt{train} / \texttt{predict} interface.
-
-\begin{lstlisting}[language=Python, caption={ResourceAllocator — Agent Wrapper Class}]
-class ResourceAllocator:
-    """
-    BRAIN of the optimizer.
-    Learns optimal Spark configurations via PPO.
-    """
-
-    def __init__(self):
-        self.env = DummyVecEnv([lambda: SparkResourceEnv()])
-        self.model = None
-
-    def train(self, total_timesteps=50_000):
-        """
-        Train through trial and feedback (offline phase).
-        """
-        self.model = PPO(
-            policy          = "MlpPolicy",
-            env             = self.env,
-            learning_rate   = 3e-4,
-            n_steps         = 2048,      # rollout buffer size
-            batch_size      = 64,
-            n_epochs        = 10,        # gradient updates per rollout
-            clip_range      = 0.2,
-            ent_coef        = 0.01,
-            vf_coef         = 0.5,
-            gamma           = 0.99,
-            verbose         = 1,
-        )
-        self.model.learn(total_timesteps=total_timesteps)
-        self.model.save("ppo_resource_allocator")
-
-    def predict(self, state: np.ndarray) -> np.ndarray:
-        """
-        Runtime inference — called every 5 s during streaming.
-        Returns: [executors, memory_gb, storage_tier]
-        """
-        action, _ = self.model.predict(state, deterministic=True)
-        return action          # e.g. [9, 4, 0]  => 10 exec, 5 GB, Redis
-\end{lstlisting}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Neural Network Architecture}
-\label{sec:nn_arch}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Both the \textit{policy head} (actor) and the \textit{value head} (critic) share a
-common feature-extraction backbone, as illustrated in Figure~\ref{fig:nn_arch}.
+The full loss adds a critic term ($c_1=0.5$) and entropy bonus ($c_2=0.01$).
+The actor and critic share a two-layer MLP backbone (Figure~\ref{fig:nn_arch}),
+totalling $\approx$4,868 parameters for sub-millisecond inference.
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}[
     layer/.style={rectangle, draw, rounded corners=4pt, minimum width=2.5cm,
                   minimum height=0.8cm, font=\scriptsize, align=center},
-    arr/.style={-{Stealth[length=2mm]}, thick},
-    scale=0.88, transform shape
+    arr/.style={-{Stealth[length=2mm]}, thick}, scale=0.88, transform shape
 ]
-% Input
-\node[layer, fill=blue!10]       (inp)  at (0,0)      {Input\\6 neurons\\(state $s_t$)};
-% Shared hidden
-\node[layer, fill=gray!15]       (h1)   at (3.5,0)    {Hidden 1\\64 neurons\\ReLU};
-\node[layer, fill=gray!15]       (h2)   at (7,0)      {Hidden 2\\64 neurons\\ReLU};
-% Policy head
-\node[layer, fill=green!15]      (pi)   at (10.5,1.3) {Policy Head\\3 logit outputs\\(E, M, T)};
-% Value head
-\node[layer, fill=red!10]        (vf)   at (10.5,-1.3){Value Head\\1 scalar\\$V(s_t)$};
-
-\draw[arr] (inp) -- (h1);
-\draw[arr] (h1)  -- (h2);
-\draw[arr] (h2)  -- (pi);
-\draw[arr] (h2)  -- (vf);
-
-% Parameter counts
-\node[font=\tiny, gray, below=0.05cm of h1] {$6{\times}64{+}64 = 448$ params};
-\node[font=\tiny, gray, below=0.05cm of h2] {$64{\times}64{+}64 = 4160$ params};
-\node[font=\tiny, gray, right=0.05cm of pi] {$64{\times}3{+}3 = 195$};
-\node[font=\tiny, gray, right=0.05cm of vf] {$64{\times}1{+}1 = 65$};
+\node[layer, fill=blue!10]  (inp) at (0,0)      {Input\\6 neurons};
+\node[layer, fill=gray!15]  (h1)  at (3.5,0)    {Hidden 1\\64, ReLU};
+\node[layer, fill=gray!15]  (h2)  at (7,0)      {Hidden 2\\64, ReLU};
+\node[layer, fill=green!15] (pi)  at (10.5,1.3) {Policy Head\\3 outputs};
+\node[layer, fill=red!10]   (vf)  at (10.5,-1.3){Value Head\\1 scalar};
+\draw[arr] (inp)--(h1); \draw[arr] (h1)--(h2);
+\draw[arr] (h2)--(pi);  \draw[arr] (h2)--(vf);
 \end{tikzpicture}
-\caption{MLP network architecture shared by the PPO actor and critic. Total trainable
-parameters: $\approx$4,868 --- lightweight enough for sub-millisecond GPU inference.}
+\caption{Shared MLP backbone: $\approx$4,868 params, sub-ms inference.}
 \label{fig:nn_arch}
 \end{figure}
 
-\begin{lstlisting}[language=Python, caption={Neural Network Architecture (PyTorch)},]
-class MLPNetwork(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.shared = nn.Sequential(
-            nn.Linear(6, 64), nn.ReLU(),
-            nn.Linear(64, 64), nn.ReLU(),
-        )
-        self.policy_head = nn.Linear(64, 3)   # logits for (E, M, T)
-        self.value_head  = nn.Linear(64, 1)   # state value V(s)
-
-    def forward(self, x):
-        features = self.shared(x)
-        return self.policy_head(features), self.value_head(features)
-\end{lstlisting}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Training Pipeline and Hyperparameters}
+% ─────────────────────────────────────────────────────────────
+\section{Training and Results}
 \label{sec:training_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-\begin{table}[H]
-\centering
-\caption{Full list of PPO hyperparameters used in training}
-\label{tab:ppo_hparams_ch4}
-\begin{tabular}{lll}
-\toprule
-\textbf{Hyperparameter} & \textbf{Value} & \textbf{Rationale} \\
-\midrule
-Algorithm               & PPO (SB3)            & Stable discrete-action RL \\
-Policy architecture     & MLP, 2$\times$64 ReLU & Lightweight, fast inference \\
-Learning rate           & $3\times10^{-4}$     & Adam, well-tuned for PPO \\
-Discount factor ($\gamma$) & 0.99              & Long-horizon credit assignment \\
-Clip range ($\varepsilon$) & 0.2              & Conservative policy step \\
-Rollout buffer          & 2048 steps           & Collect before each update \\
-Batch size              & 64                   & Mini-batch gradient update \\
-Epochs per rollout      & 10                   & Re-use each sample 10 times \\
-Entropy coefficient     & 0.01                 & Light exploration pressure \\
-Value loss coefficient  & 0.5                  & Balance actor and critic \\
-Total timesteps         & 50,000               & Converges in $\sim$8 min (M2) \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{lstlisting}[language=Python, caption={One-line Training Pipeline}]
-optimizer = ResourceAllocator()
-optimizer.train(total_timesteps=50_000)
-print("Training complete — model saved to ppo_resource_allocator.zip")
-\end{lstlisting}
-
-
-\subsection{Learning Curve Analysis}
-
-Figure~\ref{fig:learning_curve} plots the episodic reward across 100 training episodes,
-showing the characteristic three-phase PPO convergence pattern.
+% ─────────────────────────────────────────────────────────────
+Training runs offline for 50,000 steps ($\sim$8 min on Apple M2): 2,048-step rollouts,
+64-sample mini-batches, 10 gradient epochs per rollout, $\gamma=0.99$, lr $=3\times10^{-4}$.
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=13cm, height=6.5cm,
-    xlabel={Training Episode},
-    ylabel={Cumulative Episode Reward},
-    title={\textbf{PPO Learning Curve --- Spark Resource Optimizer}},
+    width=13cm, height=5.5cm,
+    xlabel={Training Episode}, ylabel={Cumulative Reward},
+    title={\textbf{PPO Learning Curve}},
     grid=major, grid style={gray!25},
-    ymin=-430, ymax=-240,
-    xmin=0, xmax=100,
+    ymin=-430, ymax=-240, xmin=0, xmax=100,
     legend pos=south east, legend style={font=\footnotesize},
     every axis plot/.append style={thick}
 ]
-% PPO learning curve
 \addplot[green!60!black, smooth] coordinates {
-    (0,-420)(5,-415)(10,-407)(15,-400)(20,-393)
-    (25,-385)(30,-376)(35,-368)(40,-360)(45,-350)
-    (50,-340)(55,-330)(60,-318)(65,-308)(70,-298)
-    (75,-288)(80,-278)(85,-270)(90,-264)(95,-260)(100,-257)};
+    (0,-420)(5,-415)(10,-407)(15,-400)(20,-393)(25,-385)(30,-376)
+    (35,-368)(40,-360)(45,-350)(50,-340)(55,-330)(60,-318)
+    (65,-308)(70,-298)(75,-288)(80,-278)(85,-270)(90,-264)(95,-260)(100,-257)};
 \addlegendentry{PPO Agent}
-
-% Fixed baseline
 \addplot[red!65, dashed] coordinates {(0,-380)(100,-380)};
-\addlegendentry{Fixed 15-executor baseline}
-
-% HPA baseline
+\addlegendentry{Fixed 15-exec}
 \addplot[purple!65, dashed] coordinates {(0,-350)(100,-350)};
-\addlegendentry{HPA (reactive) baseline}
-
-% Phase annotations
-\draw[|-|, gray, thin] (axis cs:0,-425) -- (axis cs:25,-425)
-    node[midway, below, font=\tiny]{Exploration};
-\draw[|-|, gray, thin] (axis cs:25,-425) -- (axis cs:70,-425)
-    node[midway, below, font=\tiny]{Refinement};
-\draw[|-|, gray, thin] (axis cs:70,-425) -- (axis cs:100,-425)
-    node[midway, below, font=\tiny]{Convergence};
+\addlegendentry{HPA baseline}
+\draw[|-|, gray, thin] (axis cs:0,-425)--(axis cs:25,-425)
+    node[midway,below,font=\tiny]{Exploration};
+\draw[|-|, gray, thin] (axis cs:25,-425)--(axis cs:70,-425)
+    node[midway,below,font=\tiny]{Refinement};
+\draw[|-|, gray, thin] (axis cs:70,-425)--(axis cs:100,-425)
+    node[midway,below,font=\tiny]{Convergence};
 \end{axis}
 \end{tikzpicture}
-\caption{PPO learning curve across 100 training episodes. The agent surpasses both
-baselines by Episode 40 and reaches a stable optimum at Episode 70.}
+\caption{PPO surpasses both baselines by Episode 40 and converges by Episode 70.}
 \label{fig:learning_curve}
 \end{figure}
 
-\noindent The learning curve exhibits three distinct phases:
-\begin{enumerate}
-  \item \textbf{Exploration (Episodes 0--25):} Reward fluctuates between $-420$ and
-        $-400$ as the agent takes random actions to build its replay buffer and discover
-        the reward landscape.
-  \item \textbf{Refinement (Episodes 25--70):} Reward improves steadily at approximately
-        2 points per episode as the policy gradient signal becomes consistent.
-  \item \textbf{Convergence (Episodes 70+):} Variance collapses; the agent consistently
-        selects configurations in the reward-peak region identified in
-        Figure~\ref{fig:reward_surface}.
-\end{enumerate}
+\begin{table}[H]
+\centering
+\caption{PPO optimizer vs.\ traditional fixed-executor baseline}
+\label{tab:results_rl}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Metric} & \textbf{Fixed (15 exec)} & \textbf{PPO} & \textbf{Change} \\
+\midrule
+Average latency       & 245 ms    & \textbf{119 ms}      & $-$51.4\% \\
+SLA compliance        & 81.5\%    & \textbf{100\%}       & +18.5 pts \\
+Hourly cost           & \$8.50    & \textbf{\$6.20}      & $-$27.1\% \\
+Scaling reaction      & 60 s      & \textbf{5 s}         & 12$\times$ \\
+Cold starts           & 7         & \textbf{0}           & Eliminated \\
+Idle cost (night)     & \$11.25   & \textbf{\$0.50}      & $-$95.6\% \\
+Peak throughput       & 750 msg/s & \textbf{1,650 msg/s} & +2.2$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Complexity Analysis}
-\label{sec:complexity_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The computational cost of a single PPO update scales as:
-\[
-  \mathcal{O}\!\left(N \times B \times H \times E_{epochs}\right)
-\]
-where $N = 1$ (environments), $B = 64$ (batch size), $H = 2048$ (horizon), and
-$E_{epochs} = 10$. With total timesteps $= 50{,}000$, PPO performs
-$\approx 24$ full rollout-update cycles. On an Apple M2 processor this completes in
-approximately 8 minutes, making re-training feasible even after small workload
-distribution shifts.
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Deployment Workflow}
+% ─────────────────────────────────────────────────────────────
+\section{Deployment and Summary}
 \label{sec:deploy_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Once trained, the serialised model (\texttt{ppo\_resource\_allocator.zip}) is loaded
-by the Spark streaming application once at startup and then called once per
-micro-batch to determine the next resource configuration.
-
-\begin{lstlisting}[language=Python, caption={Runtime Integration with Spark Structured Streaming}]
-class SparkStreamingWithRL:
-    """
-    Integrates the RL optimizer into a Spark foreachBatch pipeline.
-    """
-    def __init__(self):
-        # Load once at driver startup (< 50 ms)
-        self.optimizer = PPO.load("ppo_resource_allocator")
-
-    def on_new_microbatch(self, batch_df, epoch_id):
-        """Called by Spark every ~5 seconds."""
-        metrics = self._collect_metrics(batch_df)
-        state   = np.array(list(metrics.values()), dtype=np.float32)
-        action, _  = self.optimizer.predict(state, deterministic=True)
-        executors, memory, tier = action[0]+1, action[1]+1, action[2]
-        self._apply_config(executors, memory, tier)
-
-    def _apply_config(self, e, m, t):
-        # Issues REST call to Spark Dynamic Allocation API
-        requests.post(f"{SPARK_DRIVER}/scale",
-                      json={"executors": e, "memory_gb": m})
-\end{lstlisting}
-
-\noindent Figure~\ref{fig:deployment_flow} illustrates the full deployment data-flow
-from Spark metrics to applied configuration.
+% ─────────────────────────────────────────────────────────────
+The serialised model is loaded once at Spark Driver startup ($<$50 ms). Every
+micro-batch, a 6-dim state vector is collected, a deterministic forward pass selects
+$[E,M,T]$, and a REST call applies the configuration. Figure~\ref{fig:deployment_flow}
+shows the closed-loop data flow.
 
 \begin{figure}[H]
 \centering
@@ -720,78 +275,22 @@ from Spark metrics to applied configuration.
                 minimum height=0.85cm, font=\scriptsize, align=center},
     arr/.style={-{Stealth[length=2.5mm]}, thick},
 ]
-\node[box, fill=blue!10]     (spark) at (0,0)     {Spark\\Structured Streaming};
-\node[box, fill=gray!15]     (coll)  at (4,0)     {Metrics\\Collector};
-\node[box, fill=green!12]    (rl)    at (8,0)      {PPO Model\\(loaded once)};
-\node[box, fill=orange!15]   (api)   at (12,0)     {Spark Driver\\REST API};
-\node[box, fill=red!10]      (exec)  at (12,-2)    {Dynamic Executor\\Allocation};
-
-\draw[arr] (spark) -- node[above,font=\tiny]{micro-batch} (coll);
-\draw[arr] (coll)  -- node[above,font=\tiny]{6-dim state} (rl);
-\draw[arr] (rl)    -- node[above,font=\tiny]{[E,M,T]} (api);
-\draw[arr] (api)   -- node[right,font=\tiny]{POST /scale} (exec);
-\draw[arr, dashed, gray] (exec) -- ++(-12,0) |- node[below,font=\tiny,near end]{updated metrics} (coll);
+\node[box, fill=blue!10]   (spark) at (0,0)   {Spark\\Streaming};
+\node[box, fill=gray!15]   (coll)  at (3.5,0) {Metrics\\Collector};
+\node[box, fill=green!12]  (rl)    at (7,0)   {PPO Model};
+\node[box, fill=orange!15] (api)   at (10.5,0){Spark API};
+\node[box, fill=red!10]    (exec)  at (10.5,-1.8){Executors};
+\draw[arr] (spark)--(coll); \draw[arr] (coll)--(rl);
+\draw[arr] (rl)--(api); \draw[arr] (api)--(exec);
+\draw[arr, dashed, gray] (exec) -- ++(-10.5,0) |- (coll);
 \end{tikzpicture}
-\caption{End-to-end deployment data-flow showing how the PPO model integrates with
-live Spark Structured Streaming every micro-batch interval.}
+\caption{Deployment data-flow: PPO integrates with Spark via \texttt{foreachBatch}.}
 \label{fig:deployment_flow}
 \end{figure}
 
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Observed Results}
-\label{sec:results_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-Table~\ref{tab:results_rl} summarises the improvements observed after deploying the
-PPO-based optimizer alongside a traditional fixed 15-executor configuration on the
-same 24-hour IoT workload trace.
-
-\begin{table}[H]
-\centering
-\caption{PPO optimizer vs.\ traditional fixed-executor baseline}
-\label{tab:results_rl}
-\begin{tabular}{lccc}
-\toprule
-\textbf{Metric} & \textbf{Fixed (15 exec)} & \textbf{PPO Optimizer} & \textbf{Change} \\
-\midrule
-Average latency        & 245 ms   & \textbf{119 ms}   & $-$51.4\%         \\
-SLA compliance         & 81.5\%   & \textbf{100\%}    & +18.5 percentage pts \\
-Hourly compute cost    & \$8.50   & \textbf{\$6.20}   & $-$27.1\%         \\
-Scaling reaction time  & 60 s     & \textbf{5 s}      & 12$\times$ faster \\
-Cold-start events      & 7        & \textbf{0}        & Eliminated        \\
-Idle cost (night)      & \$11.25  & \textbf{\$0.50}   & $-$95.6\%         \\
-Peak throughput        & 750 msg/s & \textbf{1,650 msg/s} & $+$2.2$\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-
-% ──────────────────────────────────────────────────────────────────────────────
-\section{Summary}
-\label{sec:summary_rl}
-% ──────────────────────────────────────────────────────────────────────────────
-
-This chapter detailed the complete design and operation of the RL-based resource
-optimizer for the Serverless Spark IoT Framework. The key contributions are:
-
-\begin{enumerate}
-  \item A \textbf{Gymnasium-compliant simulation environment} that faithfully replicates
-        Spark's utilisation, latency, and cost dynamics, enabling offline training
-        without a live cluster.
-  \item A \textbf{multi-objective reward function} that jointly minimises cost and
-        latency while incentivising throughput, allowing the agent to discover
-        Pareto-optimal configurations autonomously.
-  \item A \textbf{PPO-trained policy} with a shared two-layer MLP backbone that
-        converges within 50,000 timesteps (8 minutes) and outperforms both the fixed
-        baseline and the HPA reactive policy on all measured metrics.
-  \item A \textbf{clean streaming integration} via Spark Structured Streaming's
-        \texttt{foreachBatch} API, enabling millisecond-level inference with a single
-        pre-loaded model.
-\end{enumerate}
-
-\noindent However, the fixed reward weights ($\alpha{=}0.4, \beta{=}0.4, \gamma{=}0.2$)
-remain a limitation: they cannot adapt when operational priorities shift between night-idle
-cost saving and daytime SLA preservation. Chapter~\ref{chap:two_phase_rl_openfaas}
-addresses this limitation by introducing the Two-Phase Hierarchical RL system that
-dynamically reweights the reward function based on episode-level workload health.
+\noindent \textbf{Key contributions:} (1)~Gymnasium-compliant Spark simulator for
+offline training, (2)~multi-objective reward balancing cost/latency/throughput,
+(3)~PPO policy converging in $\sim$8 min and beating all baselines, (4)~clean Spark
+integration with sub-ms inference. The fixed reward weights ($\alpha{=}0.4$,
+$\beta{=}0.4$, $\gamma{=}0.2$) remain a limitation addressed in
+Chapter~\ref{chap:two_phase_rl_openfaas} via Two-Phase Hierarchical RL.
