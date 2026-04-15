@@ -73,6 +73,7 @@ class IoTReading:
     sensor_type: str
     value: float
     timestamp: str
+    is_critical_spike: bool = False
 
 @dataclass
 class SparkMetrics:
@@ -114,11 +115,18 @@ class EndToEndPipelineDemo:
             "traffic": random.randint(10, 500)
         }
         
+        is_critical_spike = False
+        if random.random() < 0.3:  # 30% chance of a massive spike
+            sensor_type = "temperature"
+            values["temperature"] = random.uniform(81.0, 145.0)
+            is_critical_spike = True
+        
         return IoTReading(
             sensor_id=f"sensor_{random.randint(1, 100):03d}",
             sensor_type=sensor_type,
             value=values[sensor_type],
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.now().isoformat(),
+            is_critical_spike=is_critical_spike
         )
     
     def simulate_mqtt_publish(self, reading: IoTReading) -> bool:
@@ -356,6 +364,17 @@ class EndToEndPipelineDemo:
                     print_metric("Status", f"{Colors.GREEN}{yarn_result['status']}{Colors.ENDC}")
                 else:
                     print_step("⏸️", f"YARN: No change needed (keeping {self.current_executors} executors)")
+                
+                # ─────────────────────────────────────────────────────────────
+                # 7. BUSINESS LOGIC / END-TO-END ALERTING
+                # ─────────────────────────────────────────────────────────────
+                has_spike = any(r.is_critical_spike for r in readings)
+                if has_spike:
+                    print()
+                    print_step("🚨", f"{Colors.RED}{Colors.BOLD}CRITICAL APPLICATION ALERT: Heat Spike Detected!{Colors.ENDC}", color=Colors.RED)
+                    high_temp = max(r.value for r in readings if r.is_critical_spike)
+                    print_metric("Reading", f"{Colors.RED}{high_temp:.1f}°C (Exceeds 80°C threshold){Colors.ENDC}", color=Colors.RED)
+                    print_metric("End-to-End Action", f"{Colors.YELLOW}Triggering emergency response protocol. IoT → Cloud communication confirmed.{Colors.ENDC}", color=Colors.YELLOW)
                 
                 print()
                 time.sleep(0.3)

@@ -26,10 +26,11 @@ def baseline_allocator(state):
         num_executors = 5
         memory = 2
     
-    # Always use S3 (conservative)
+    # Always use S3 (conservative) and base compression
     storage_tier = 2
+    compression_level = 0
     
-    return np.array([num_executors-1, memory-1, storage_tier])
+    return np.array([num_executors-1, memory-1, storage_tier, compression_level])
 
 
 def evaluate_allocator(allocator_fn, env, num_episodes=10):
